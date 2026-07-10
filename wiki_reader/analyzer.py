@@ -293,6 +293,15 @@ def grammar_token_translation(row: dict[str, Any]) -> str:
     return GRAMMAR_TOKEN_TRANSLATIONS.get((pos1, surface), "")
 
 
+def analyzer_canonical_token(node) -> str:
+    pos = getattr(node.feature, "pos1", "") or "*"
+    lemma = getattr(node.feature, "lemma", "") or ""
+    orth_base = getattr(node.feature, "orthBase", "") or ""
+    if pos == "名詞" and lemma and orth_base and kana_only(orth_base) and has_kanji(lemma):
+        return f"{lemma}::{pos}"
+    return canonical_token(node, "lemma_pos")
+
+
 def token_row(
     item,
     translation_provider: TranslationProvider,
@@ -303,7 +312,7 @@ def token_row(
     reading = reading_fields([node])
     pos1 = getattr(node.feature, "pos1", "") or "*"
     pos2 = getattr(node.feature, "pos2", "") or "*"
-    canonical = canonical_token(node, "lemma_pos")
+    canonical = analyzer_canonical_token(node)
     row = {
         "surface": node.surface,
         "pos1": pos1,
@@ -669,7 +678,7 @@ def plain_token_row(node, translation_provider: TranslationProvider) -> dict[str
     reading = reading_fields([node])
     pos1 = getattr(node.feature, "pos1", "") or "*"
     pos2 = getattr(node.feature, "pos2", "") or "*"
-    canonical = canonical_token(node, "lemma_pos")
+    canonical = analyzer_canonical_token(node)
     row = {
         "surface": node.surface,
         "pos1": pos1,

@@ -79,6 +79,17 @@ def test_te_iru_passive_chain_uses_semantic_base_verb():
     assert token["translation"] == "to say; to utter; to declare"
 
 
+def test_kana_written_nominal_uses_kanji_lemma_to_avoid_homophone_gloss():
+    rows = rows_by_surface(
+        "高齢で出産したことから恥じた。",
+        {"事::名詞": "thing; matter"},
+    )
+
+    token = rows["こと"]
+    assert token["canonical"] == "事::名詞"
+    assert token["translation"] == "thing; matter"
+
+
 def test_sareteiru_chain_still_maps_to_suru():
     rows = rows_by_surface("評価されている。", {"する::動詞": "to do"})
 
