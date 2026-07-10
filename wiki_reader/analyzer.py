@@ -24,7 +24,10 @@ from .wikidata_places import (
 from .wikimedia_readings import WikimediaReadingProvider, default_reading_provider
 
 
-TRACKED_POS = {"名詞", "動詞", "形容詞", "接頭辞"}
+TRACKED_POS = {"名詞", "動詞", "形容詞", "形状詞", "副詞", "接続詞", "接頭辞", "代名詞"}
+GRAMMAR_TOKEN_TRANSLATIONS = {
+    ("助詞", "ほど"): "to the extent that; so much that; degree/extent",
+}
 
 
 def analyze_article(
@@ -44,24 +47,25 @@ def analyze_article(
             {
                 "id": f"sentence-{index}",
                 **analyze_sentence_with_cache(
-                    sentence,
+                    sentence_entry,
                     translation_provider=provider,
                     place_provider=gazetteer,
                     reading_provider=readings,
                 ),
             }
-            for index, sentence in enumerate(article["sentences"], start=1)
+            for index, sentence_entry in enumerate(article["sentences"], start=1)
         ],
     }
 
 
 def analyze_sentence_with_cache(
-    sentence: str,
+    sentence_entry: str | dict[str, Any],
     *,
     translation_provider: TranslationProvider,
     place_provider: WikidataPlaceProvider | None = None,
     reading_provider: WikimediaReadingProvider | None = None,
 ) -> dict[str, Any]:
+    sentence, headings, heading_ranges = sentence_display_fields(sentence_entry)
     analysis_text, suppressed_spans = suppress_parenthetical_readings(
         sentence, translation_provider
     )
@@ -74,10 +78,32 @@ def analyze_sentence_with_cache(
     return {
         "display_text": sentence,
         "analysis_text": analysis_text,
+        "headings": headings,
+        "heading_ranges": heading_ranges,
         "suppressed_spans": suppressed_spans,
         "tokens": rows,
         "unique_sentence_cache": build_sentence_token_cache(rows),
     }
+
+
+def sentence_display_fields(sentence_entry: str | dict[str, Any]) -> tuple[str, list[str], list[dict[str, int]]]:
+    if isinstance(sentence_entry, str):
+        return sentence_entry, [], []
+    text = str(sentence_entry.get("text", ""))
+    headings = [
+        str(heading).strip()
+        for heading in sentence_entry.get("headings", [])
+        if str(heading).strip()
+    ]
+    if not headings:
+        return text, [], []
+    parts = [*headings, text]
+    ranges: list[dict[str, int]] = []
+    cursor = 0
+    for heading in headings:
+        ranges.append({"start": cursor, "end": cursor + len(heading)})
+        cursor += len(heading) + 1
+    return "\n".join(parts), headings, ranges
 
 
 def analyze_sentence(
@@ -142,6 +168,33 @@ def analyze_sentence(
             )
             index = int(match["end_index"])
             continue
+        te_iru_end = te_iru_chain_end_index(tagged, index)
+        if te_iru_end is not None:
+            rows.append(
+                verb_chain_token(
+                    tagged[index:te_iru_end],
+                    sentence,
+                    translation_provider,
+                    phrase_matches,
+                    place_matches,
+                )
+            )
+            index = te_iru_end
+            continue
+        dictionary_compound_items = dictionary_noun_compound_items(
+            tagged, index, translation_provider
+        )
+        if dictionary_compound_items is not None:
+            rows.append(
+                compound_token(
+                    dictionary_compound_items,
+                    translation_provider,
+                    phrase_matches,
+                    place_matches,
+                )
+            )
+            index += len(dictionary_compound_items)
+            continue
         if node_is_noun(node):
             compound_items = [item]
             next_index = index + 1
@@ -160,6 +213,10 @@ def analyze_sentence(
                 index = next_index
                 continue
         if node_is_nominal_suffix(node) and previous_significant_node_is_numeric(tagged, index):
+            rows.append(token_row(item, translation_provider, phrase_matches, place_matches))
+            index += 1
+            continue
+        if grammar_token_node(node):
             rows.append(token_row(item, translation_provider, phrase_matches, place_matches))
             index += 1
             continue
@@ -224,6 +281,18 @@ def matching_preceding_tokens(
     return []
 
 
+def grammar_token_node(node) -> bool:
+    pos1 = getattr(node.feature, "pos1", "") or "*"
+    surface = str(node.surface)
+    return (pos1, surface) in GRAMMAR_TOKEN_TRANSLATIONS
+
+
+def grammar_token_translation(row: dict[str, Any]) -> str:
+    pos1 = str(row.get("pos1", ""))
+    surface = str(row.get("surface", ""))
+    return GRAMMAR_TOKEN_TRANSLATIONS.get((pos1, surface), "")
+
+
 def token_row(
     item,
     translation_provider: TranslationProvider,
@@ -246,7 +315,7 @@ def token_row(
         "phrases": overlapping_phrases(phrase_matches, item.start, item.end),
         "places": overlapping_places(place_matches, item.start, item.end),
     }
-    row["translation"] = translation_provider.lookup(row)
+    row["translation"] = grammar_token_translation(row) or translation_provider.lookup(row)
     return row
 
 
@@ -337,12 +406,56 @@ def wikimedia_reading_token(
     return row
 
 
+def verb_chain_token(
+    items: list[object],
+    sentence: str,
+    translation_provider: TranslationProvider,
+    phrase_matches: list[dict[str, Any]],
+    place_matches: list[dict[str, Any]],
+) -> dict[str, Any]:
+    base = items[0].node
+    surface = sentence[items[0].start : items[-1].end]
+    reading = reading_fields_for_surface_or_nodes(surface, [item.node for item in items])
+    row = {
+        "surface": surface,
+        "pos1": "動詞",
+        "pos2": getattr(base.feature, "pos2", "") or "*",
+        "canonical": verb_chain_canonical(base),
+        **reading,
+        "start": items[0].start,
+        "end": items[-1].end,
+        "phrases": overlapping_phrases(phrase_matches, items[0].start, items[-1].end),
+        "places": overlapping_places(place_matches, items[0].start, items[-1].end),
+    }
+    row["translation"] = translation_provider.lookup(row)
+    return row
+
+
+def verb_chain_canonical(base) -> str:
+    pos = getattr(base.feature, "pos1", "") or "*"
+    lemma = getattr(base.feature, "lemma", "") or ""
+    orth_base = getattr(base.feature, "orthBase", "") or ""
+    if orth_base == "する":
+        return f"する::{pos}"
+    if lemma and orth_base and kana_only(orth_base) and has_kanji(lemma):
+        return f"{lemma}::{pos}"
+    return canonical_token(base, "lemma_pos")
+
+
+def kana_only(text: str) -> bool:
+    return bool(text) and re.fullmatch(r"[ぁ-ゖァ-ヺー]+", text) is not None
+
+
+def has_kanji(text: str) -> bool:
+    return any("\u4e00" <= char <= "\u9fff" for char in text)
+
+
 def place_translation(places: list[dict[str, str]]) -> str:
     if not places:
         return ""
     place = places[0]
-    label = place.get("label", "")
-    description = place.get("description", "")
+    label = place.get("english_label", "") or place.get("label", "")
+    description = place.get("english_description", "") or place.get("description", "")
     if label and description:
         return f"{label}: {description}"
     return label or description
@@ -352,6 +465,42 @@ def compound_pos2(nodes: list[object]) -> str:
     if any(getattr(node.feature, "pos2", "") == "固有名詞" for node in nodes):
         return "固有名詞"
     return "普通名詞"
+
+
+def dictionary_noun_compound_items(
+    tagged: list[object],
+    start: int,
+    translation_provider: TranslationProvider,
+) -> list[object] | None:
+    if not node_is_common_noun(tagged[start].node):
+        return None
+    candidates: list[list[object]] = []
+    for end in range(start + 2, min(len(tagged), start + 5) + 1):
+        items = tagged[start:end]
+        if not all(node_is_common_noun(item.node) for item in items):
+            break
+        candidates.append(items)
+    for items in reversed(candidates):
+        if dictionary_confirmed_compound(items, translation_provider):
+            return items
+    return None
+
+
+def dictionary_confirmed_compound(
+    items: list[object], translation_provider: TranslationProvider
+) -> bool:
+    nodes = [item.node for item in items]
+    surface = "".join(node.surface for node in nodes)
+    row = {
+        "surface": surface,
+        "pos1": "名詞",
+        "pos2": compound_pos2(nodes),
+        "canonical": f"{surface}::名詞",
+        **reading_fields(nodes),
+    }
+    if not translation_provider.lookup(row):
+        return False
+    return all(plain_token_row(node, translation_provider).get("translation") for node in nodes)
 
 
 def detect_wikimedia_reading_matches(
@@ -422,6 +571,26 @@ def missing_node_reading(node) -> bool:
     return base_kana(node) == ""
 
 
+def te_iru_chain_end_index(tagged: list[object], start: int) -> int | None:
+    if not node_is_verb(tagged[start].node):
+        return None
+    index = start + 1
+    while index < len(tagged) and getattr(tagged[index].node.feature, "pos1", "") == "助動詞":
+        index += 1
+    if index + 1 >= len(tagged):
+        return None
+    if tagged[index].node.surface != "て":
+        return None
+    iru = tagged[index + 1].node
+    if iru.surface != "いる":
+        return None
+    if getattr(iru.feature, "pos1", "") != "動詞":
+        return None
+    if getattr(iru.feature, "pos2", "") != "非自立可能":
+        return None
+    return index + 2
+
+
 def reading_fields(nodes: list[object]) -> dict[str, str]:
     parts = [katakana_to_hiragana(base_kana(node)) for node in nodes]
     known_count = sum(1 for part in parts if part)
@@ -434,6 +603,19 @@ def reading_fields(nodes: list[object]) -> dict[str, str]:
         "romaji": kana_to_romaji(hiragana),
         "reading_status": status,
     }
+
+
+def reading_fields_for_surface_or_nodes(
+    surface: str, nodes: list[object]
+) -> dict[str, str]:
+    if re.fullmatch(r"[ぁ-ゖァ-ヺー]+", surface):
+        hiragana = katakana_to_hiragana(surface)
+        return {
+            "hiragana": hiragana,
+            "romaji": kana_to_romaji(hiragana),
+            "reading_status": "available",
+        }
+    return reading_fields(nodes)
 
 
 def inherited_compound_tokens(
@@ -501,6 +683,14 @@ def plain_token_row(node, translation_provider: TranslationProvider) -> dict[str
 
 def node_is_noun(node) -> bool:
     return token_node_is_lexical(node) and getattr(node.feature, "pos1", "") == "名詞"
+
+
+def node_is_common_noun(node) -> bool:
+    return node_is_noun(node) and getattr(node.feature, "pos2", "") == "普通名詞"
+
+
+def node_is_verb(node) -> bool:
+    return token_node_is_lexical(node) and getattr(node.feature, "pos1", "") == "動詞"
 
 
 def node_is_nominal_suffix(node) -> bool:

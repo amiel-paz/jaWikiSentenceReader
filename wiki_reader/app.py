@@ -6,6 +6,7 @@ from flask import Flask, jsonify, request, send_from_directory
 
 from .analyzer import analyze_article
 from .wiki_api import fetch_article_from_input
+from .wikidata_places import default_place_provider
 
 
 def create_app() -> Flask:
@@ -27,6 +28,15 @@ def create_app() -> Flask:
         except Exception as error:
             return jsonify({"error": str(error)}), 400
         return jsonify(analyzed)
+
+    @app.post("/api/place-cache")
+    def place_cache():
+        payload = request.get_json(silent=True) or {}
+        places = payload.get("places") if isinstance(payload, dict) else None
+        if not isinstance(places, list):
+            return jsonify({"error": "places must be a list"}), 400
+        provider = default_place_provider(base_dir)
+        return jsonify({"cached": provider.persist_places(places)})
 
     return app
 

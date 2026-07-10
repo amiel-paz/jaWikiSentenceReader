@@ -59,18 +59,26 @@ endSessionButton.addEventListener("click", () => {
 cancelEndButton.addEventListener("click", () => {
   confirmOverlay.hidden = true;
 });
-confirmEndButton.addEventListener("click", () => {
-  for (const [canonical, counts] of state.sessionCounts) {
-    const global = state.globalCounts.get(canonical) ?? {
-      encounters: 0,
-      recognitions: 0,
-    };
-    global.encounters += counts.encounters;
-    global.recognitions += counts.recognitions;
-    state.globalCounts.set(canonical, global);
+confirmEndButton.addEventListener("click", async () => {
+  confirmEndButton.disabled = true;
+  try {
+    await persistEncounteredPlaces();
+    for (const [canonical, counts] of state.sessionCounts) {
+      const global = state.globalCounts.get(canonical) ?? {
+        encounters: 0,
+        recognitions: 0,
+      };
+      global.encounters += counts.encounters;
+      global.recognitions += counts.recognitions;
+      state.globalCounts.set(canonical, global);
+    }
+    confirmOverlay.hidden = true;
+    resetToLanding();
+  } catch (error) {
+    window.alert(error.message);
+  } finally {
+    confirmEndButton.disabled = false;
   }
-  confirmOverlay.hidden = true;
-  resetToLanding();
 });
 
 popover.addEventListener("click", (event) => {
@@ -153,25 +161,80 @@ function navigate(direction) {
 function render() {
   const sentence = currentSentence();
   markSentenceViewed(sentence);
-  sentenceIndex.textContent = `Sentence ${state.index + 1} of ${
-    state.article.sentences.length
-  }`;
+  renderSentenceIndex();
   sentenceEl.replaceChildren(...renderSentence(sentence));
   previousButton.disabled = state.index === 0;
   nextButton.disabled = state.index === state.article.sentences.length - 1;
 }
 
+function renderSentenceIndex() {
+  const current = state.index + 1;
+  const total = state.article.sentences.length;
+  const jumpButton = document.createElement("button");
+  jumpButton.className = "sentence-jump";
+  jumpButton.type = "button";
+  jumpButton.textContent = String(current);
+  jumpButton.setAttribute("aria-label", `Jump from sentence ${current}`);
+  jumpButton.addEventListener("click", showSentenceJumpInput);
+  sentenceIndex.replaceChildren("Sentence ", jumpButton, ` of ${total}`);
+}
+
+function showSentenceJumpInput() {
+  const total = state.article.sentences.length;
+  const input = document.createElement("input");
+  input.className = "sentence-jump-input";
+  input.type = "number";
+  input.min = "1";
+  input.max = String(total);
+  input.inputMode = "numeric";
+  input.value = String(state.index + 1);
+  input.setAttribute("aria-label", `Sentence number, 1 to ${total}`);
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      commitSentenceJump(input.value);
+    }
+    if (event.key === "Escape") {
+      renderSentenceIndex();
+    }
+  });
+  input.addEventListener("blur", () => commitSentenceJump(input.value));
+  sentenceIndex.replaceChildren("Sentence ", input, ` of ${total}`);
+  input.focus();
+  input.select();
+}
+
+function commitSentenceJump(value) {
+  const total = state.article.sentences.length;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    renderSentenceIndex();
+    return;
+  }
+  const sentenceNumber = Math.max(1, Math.min(total, Math.trunc(parsed)));
+  state.index = sentenceNumber - 1;
+  hidePopover();
+  render();
+}
+
 function renderSentence(sentence) {
   const parts = [];
   let cursor = 0;
+  const headingRanges = sentence.heading_ranges ?? [];
   for (const token of sentence.tokens) {
     const index = sentence.display_text.indexOf(token.surface, cursor);
     if (index < 0) continue;
     if (index > cursor) {
-      parts.push(document.createTextNode(sentence.display_text.slice(cursor, index)));
+      appendTextSegment(parts, sentence.display_text, cursor, index, headingRanges);
     }
     const span = document.createElement("span");
-    span.className = `token ${tokenClass(sentence.id, token.canonical)}`;
+    span.className = [
+      "token",
+      tokenClass(sentence.id, token.canonical),
+      rangeOverlapsHeading(index, index + token.surface.length, headingRanges)
+        ? "heading-token"
+        : "",
+    ].filter(Boolean).join(" ");
     span.tabIndex = 0;
     span.textContent = token.surface;
     span.addEventListener("mouseenter", (event) => showPopover(event.currentTarget, token));
@@ -182,9 +245,47 @@ function renderSentence(sentence) {
     cursor = index + token.surface.length;
   }
   if (cursor < sentence.display_text.length) {
-    parts.push(document.createTextNode(sentence.display_text.slice(cursor)));
+    appendTextSegment(
+      parts,
+      sentence.display_text,
+      cursor,
+      sentence.display_text.length,
+      headingRanges,
+    );
   }
   return parts;
+}
+
+function appendTextSegment(parts, text, start, end, headingRanges) {
+  let cursor = start;
+  while (cursor < end) {
+    const headingRange = headingRanges.find(
+      (range) => cursor >= range.start && cursor < range.end,
+    );
+    const nextBoundary = nextHeadingBoundary(cursor, end, headingRanges);
+    const value = text.slice(cursor, nextBoundary);
+    if (headingRange) {
+      const strong = document.createElement("strong");
+      strong.className = "sentence-heading";
+      strong.textContent = value;
+      parts.push(strong);
+    } else {
+      parts.push(document.createTextNode(value));
+    }
+    cursor = nextBoundary;
+  }
+}
+
+function nextHeadingBoundary(cursor, end, headingRanges) {
+  for (const range of headingRanges) {
+    if (cursor >= range.start && cursor < range.end) return Math.min(end, range.end);
+    if (range.start > cursor) return Math.min(end, range.start);
+  }
+  return end;
+}
+
+function rangeOverlapsHeading(start, end, headingRanges) {
+  return headingRanges.some((range) => start < range.end && end > range.start);
 }
 
 function tokenClass(sentenceId, canonical) {
@@ -398,6 +499,7 @@ function tokenCatalogEntry(token) {
     hiragana: token.hiragana || "",
     romaji: token.romaji || "",
     translation: token.translation || "",
+    places: token.places ?? [],
   };
 }
 
@@ -411,7 +513,7 @@ function renderSessionSummary() {
   if (rows.length === 0) {
     const empty = document.createElement("div");
     empty.className = "summary-row";
-    empty.textContent = "No tokens viewed in this session.";
+    empty.textContent = "No token encounters logged in this session.";
     sessionSummaryList.replaceChildren(empty);
     return;
   }
@@ -429,7 +531,7 @@ function sessionSummaryRows() {
       encounters: counts.encounters,
       recognitions: counts.recognitions,
     };
-  });
+  }).filter((row) => row.encounters > 0);
 }
 
 function summaryRowElement(row) {
@@ -468,6 +570,34 @@ function recognitionRatio(row) {
   return `${row.recognitions}/${row.encounters}`;
 }
 
+async function persistEncounteredPlaces() {
+  const places = encounteredPlaces();
+  if (places.length === 0) return;
+  const response = await fetch("/api/place-cache", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ places }),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error || "Could not cache encountered places.");
+  }
+}
+
+function encounteredPlaces() {
+  const places = new Map();
+  for (const entry of state.tokenCatalog.values()) {
+    const counts = state.sessionCounts.get(entry.canonical);
+    if (!counts || counts.encounters <= 0) continue;
+    for (const place of entry.places ?? []) {
+      const key = place.id || place.surface || place.label;
+      if (!key) continue;
+      places.set(key, place);
+    }
+  }
+  return [...places.values()];
+}
+
 function phraseLabel(token) {
   const phrases = token.phrases ?? [];
   if (phrases.length === 0) return "";
@@ -480,7 +610,7 @@ function placeLabel(token) {
   const places = token.places ?? [];
   if (places.length === 0) return "";
   return `place: ${places
-    .map((item) => `${item.label || item.surface} (${item.id})`)
+    .map((item) => `${item.english_label || item.label || item.surface} (${item.id})`)
     .join(", ")}`;
 }
 

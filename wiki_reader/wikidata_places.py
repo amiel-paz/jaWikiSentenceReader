@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
@@ -11,14 +12,20 @@ from urllib.request import Request, urlopen
 
 
 API_URL = "https://ja.wikipedia.org/w/api.php"
+WIKIDATA_API_URL = "https://www.wikidata.org/w/api.php"
 USER_AGENT = "wiki-sentence-reader/0.1 (local prototype)"
 ADMIN_SUFFIXES = {"国", "都", "道", "府", "県", "市", "区", "町", "村"}
+PLACE_SURFACE_RE = re.compile(r"^[一-龯ァ-ヺー]+$")
+KANJI_SURFACE_RE = re.compile(r"^[一-龯]+$")
+KATAKANA_SURFACE_RE = re.compile(r"^[ァ-ヺー]+$")
 
 
 @dataclass
 class WikidataPlaceProvider:
     cache_path: Path
     disabled: bool = False
+    persist_lookups: bool = False
+    transient_cache: dict[str, dict[str, str] | None] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -37,12 +44,15 @@ class WikidataPlaceProvider:
         if len(term) < 2:
             return None
         if self.cache_has(term):
-            return self.cached(term)
+            cached = self.cached(term)
+            if cached is not None and needs_english_enrichment(cached) and not self.disabled:
+                enriched = self.english_entities([str(cached.get("id", ""))])
+                cached.update(enriched.get(str(cached.get("id", "")), {}))
+                self.cache_result(term, cached)
+            return cached
         if self.disabled:
             return None
-        result = self.fetch(term)
-        self.store(term, result)
-        return result
+        return self.fetch(term)
 
     def prefetch(self, terms: list[str]) -> None:
         if self.disabled:
@@ -56,6 +66,8 @@ class WikidataPlaceProvider:
             self.fetch_many(chunk)
 
     def cached(self, term: str) -> dict[str, str] | None:
+        if term in self.transient_cache:
+            return self.transient_cache[term]
         with sqlite3.connect(self.cache_path) as connection:
             row = connection.execute(
                 "SELECT payload FROM wikidata_place_cache WHERE term = ?", (term,)
@@ -66,6 +78,8 @@ class WikidataPlaceProvider:
         return payload or None
 
     def cache_has(self, term: str) -> bool:
+        if term in self.transient_cache:
+            return True
         with sqlite3.connect(self.cache_path) as connection:
             row = connection.execute(
                 "SELECT 1 FROM wikidata_place_cache WHERE term = ?", (term,)
@@ -81,6 +95,33 @@ class WikidataPlaceProvider:
                 """,
                 (term, json.dumps(payload or {}, ensure_ascii=False)),
             )
+
+    def cache_result(self, term: str, payload: dict[str, str] | None) -> None:
+        if self.persist_lookups:
+            self.store(term, payload)
+        else:
+            self.transient_cache[term] = payload
+
+    def persist_places(self, places: list[dict[str, Any]]) -> int:
+        count = 0
+        for place in places:
+            surface = str(place.get("surface") or place.get("label") or "").strip()
+            qid = str(place.get("id") or "").strip()
+            if len(surface) < 2 or not qid:
+                continue
+            self.store(
+                surface,
+                {
+                    "id": qid,
+                    "label": str(place.get("label") or surface),
+                    "description": str(place.get("description") or ""),
+                    "english_label": str(place.get("english_label") or ""),
+                    "english_description": str(place.get("english_description") or ""),
+                    "url": str(place.get("url") or ""),
+                },
+            )
+            count += 1
+        return count
 
     def fetch(self, term: str) -> dict[str, str] | None:
         self.fetch_many([term])
@@ -111,24 +152,65 @@ class WikidataPlaceProvider:
             return
         pages = payload.get("query", {}).get("pages", [])
         by_title = {str(page.get("title", "")): page for page in pages}
+        qids = [
+            str(page.get("pageprops", {}).get("wikibase_item", ""))
+            for page in pages
+            if not page.get("missing")
+        ]
+        english_by_qid = self.english_entities(qids)
         for term in terms:
             page = by_title.get(term)
             if page is None or page.get("missing"):
-                self.store(term, None)
+                self.cache_result(term, None)
                 continue
             qid = str(page.get("pageprops", {}).get("wikibase_item", ""))
             if not qid:
-                self.store(term, None)
+                self.cache_result(term, None)
                 continue
-            self.store(
+            self.cache_result(
                 term,
                 {
                     "id": qid,
                     "label": str(page.get("title", "")),
                     "description": str(page.get("description", "")),
                     "url": str(page.get("canonicalurl", "")),
+                    **english_by_qid.get(qid, {}),
                 },
             )
+
+    def english_entities(self, qids: list[str]) -> dict[str, dict[str, str]]:
+        ids = [qid for qid in dict.fromkeys(qids) if qid]
+        if not ids:
+            return {}
+        query = {
+            "action": "wbgetentities",
+            "format": "json",
+            "ids": "|".join(ids),
+            "props": "labels|descriptions",
+            "languages": "en",
+            "languagefallback": "1",
+        }
+        request = Request(
+            f"{WIKIDATA_API_URL}?{urlencode(query)}",
+            headers={"Accept": "application/json", "User-Agent": USER_AGENT},
+        )
+        try:
+            with urlopen(request, timeout=20) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except (HTTPError, URLError, TimeoutError):
+            return {}
+        results: dict[str, dict[str, str]] = {}
+        for qid, entity in payload.get("entities", {}).items():
+            label = entity.get("labels", {}).get("en", {}).get("value", "")
+            description = entity.get("descriptions", {}).get("en", {}).get("value", "")
+            values = {}
+            if label:
+                values["english_label"] = str(label)
+            if description:
+                values["english_description"] = str(description)
+            if values:
+                results[str(qid)] = values
+        return results
 
 
 def default_place_provider(base_dir: Path) -> WikidataPlaceProvider:
@@ -191,15 +273,23 @@ def chunks(items: list[str], size: int) -> list[list[str]]:
     return [items[index : index + size] for index in range(0, len(items), size)]
 
 
+def needs_english_enrichment(payload: dict[str, str]) -> bool:
+    return bool(payload.get("id")) and not bool(payload.get("english_label"))
+
+
 def candidate_node(node) -> bool:
     pos1 = getattr(node.feature, "pos1", "")
-    if pos1 not in {"名詞", "接尾辞"}:
+    if pos1 not in {"名詞", "接尾辞", "接頭辞", "副詞"}:
         return False
-    return all("\u4e00" <= char <= "\u9fff" for char in node.surface)
+    if node.surface in ADMIN_SUFFIXES:
+        return True
+    return bool(KANJI_SURFACE_RE.fullmatch(node.surface) or KATAKANA_SURFACE_RE.fullmatch(node.surface))
 
 
 def valid_place_surface(surface: str, items: list[Any]) -> bool:
     if len(surface) < 2 or len(surface) > 12:
+        return False
+    if not PLACE_SURFACE_RE.fullmatch(surface):
         return False
     if surface.endswith(tuple(ADMIN_SUFFIXES)):
         return True
@@ -231,6 +321,8 @@ def overlapping_places(
                     "id": str(entity.get("id", "")),
                     "label": str(entity.get("label", "")),
                     "description": str(entity.get("description", "")),
+                    "english_label": str(entity.get("english_label", "")),
+                    "english_description": str(entity.get("english_description", "")),
                     "url": str(entity.get("url", "")),
                 }
             )

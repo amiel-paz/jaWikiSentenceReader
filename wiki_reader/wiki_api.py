@@ -9,7 +9,8 @@ from urllib.request import Request, urlopen
 
 API_URL = "https://ja.wikipedia.org/w/api.php"
 USER_AGENT = "wiki-sentence-reader/0.1 (local prototype)"
-SENTENCE_RE = re.compile(r".+?[。！？](?=\s*|$)", re.S)
+SENTENCE_RE = re.compile(r".+?[。！？]")
+HEADING_RE = re.compile(r"^(=+)\s*(.*?)\s*\1$")
 
 
 def fetch_article_from_input(value: str) -> dict[str, Any]:
@@ -22,7 +23,7 @@ def fetch_article_from_input(value: str) -> dict[str, Any]:
         "canonicalurl": page.get("canonicalurl", ""),
         "revision_id": page.get("revisions", [{}])[0].get("revid"),
         "revision_timestamp": page.get("revisions", [{}])[0].get("timestamp"),
-        "sentences": first_sentences(text, limit=80),
+        "sentences": sentence_entries(text),
     }
 
 
@@ -52,7 +53,7 @@ def fetch_article(title: str) -> dict[str, Any]:
         "titles": title,
         "prop": "extracts|info|revisions",
         "explaintext": "1",
-        "exsectionformat": "plain",
+        "exsectionformat": "wiki",
         "inprop": "url",
         "rvprop": "ids|timestamp",
     }
@@ -69,11 +70,44 @@ def fetch_article(title: str) -> dict[str, Any]:
 
 
 def first_sentences(text: str, *, limit: int) -> list[str]:
-    sentences: list[str] = []
-    for match in SENTENCE_RE.finditer(text.strip()):
-        sentence = re.sub(r"\s+", " ", match.group(0)).strip()
-        if sentence:
-            sentences.append(sentence)
-        if len(sentences) >= limit:
-            break
+    return [entry["text"] for entry in first_sentence_entries(text, limit=limit)]
+
+
+def first_sentence_entries(text: str, *, limit: int) -> list[dict[str, Any]]:
+    return sentence_entries(text, limit=limit)
+
+
+def sentence_entries(text: str, *, limit: int | None = None) -> list[dict[str, Any]]:
+    sentences: list[dict[str, Any]] = []
+    heading_stack: list[str] = []
+    pending_headings: list[str] = []
+    for block in text.splitlines():
+        block = block.strip()
+        if not block:
+            continue
+        heading = heading_match(block)
+        if heading is not None:
+            depth, title = heading
+            heading_stack = heading_stack[:depth]
+            heading_stack.append(title)
+            pending_headings = list(heading_stack)
+            continue
+        for match in SENTENCE_RE.finditer(block):
+            sentence = re.sub(r"\s+", " ", match.group(0)).strip()
+            if sentence:
+                sentences.append({"text": sentence, "headings": pending_headings})
+                pending_headings = []
+            if limit is not None and len(sentences) >= limit:
+                return sentences
     return sentences
+
+
+def heading_match(line: str) -> tuple[int, str] | None:
+    match = HEADING_RE.fullmatch(line)
+    if match is None:
+        return None
+    title = match.group(2).strip()
+    if not title:
+        return None
+    depth = max(0, len(match.group(1)) - 2)
+    return depth, title

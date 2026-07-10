@@ -170,12 +170,44 @@ h1 {
   margin-bottom: 18px;
 }
 
+.sentence-jump {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  cursor: text;
+  font: inherit;
+  padding: 0 2px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.sentence-jump:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 3px;
+}
+
+.sentence-jump-input {
+  background: var(--background);
+  border: 1px solid var(--text);
+  color: var(--text);
+  font: inherit;
+  inline-size: 4ch;
+  padding: 1px 3px;
+}
+
 .sentence {
   min-height: 220px;
   font-family:
     "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif;
   font-size: 31px;
   line-height: 2.05;
+  white-space: pre-wrap;
+}
+
+.sentence-heading,
+.token.heading-token {
+  font-weight: 700;
 }
 
 .token {

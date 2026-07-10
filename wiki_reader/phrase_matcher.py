@@ -33,6 +33,12 @@ def detect_phrase_matches(nodes: list[TaggedNode], text: str) -> list[dict[str, 
             and nodes[index + 2].node.surface == "て"
         ):
             matches.append(kakete_match(nodes, text, index))
+        if (
+            nodes[index].node.surface == "を"
+            and nodes[index + 1].node.surface in {"通し", "通じ"}
+            and nodes[index + 2].node.surface == "て"
+        ):
+            matches.append(tooshite_match(nodes, text, index))
     return matches
 
 
@@ -71,6 +77,20 @@ def kakete_match(nodes: list[TaggedNode], text: str, ni_index: int) -> dict[str,
     }
 
 
+def tooshite_match(nodes: list[TaggedNode], text: str, wo_index: int) -> dict[str, Any]:
+    start = nodes[left_boundary_before_particle(nodes, wo_index)].start
+    end = nodes[wo_index + 2].end
+    surface = text[start:end]
+    canonical = f"{nodes[wo_index].node.surface}{nodes[wo_index + 1].node.surface}て::表現"
+    return {
+        "surface": surface,
+        "start": start,
+        "end": end,
+        "canonical": canonical,
+        "translation": "through; via; by means of; throughout",
+    }
+
+
 def nearest_preceding_kara(nodes: list[TaggedNode], ni_index: int) -> int | None:
     for index in range(ni_index - 1, -1, -1):
         surface = nodes[index].node.surface
@@ -85,6 +105,17 @@ def nearest_preceding_kara(nodes: list[TaggedNode], ni_index: int) -> int | None
 def left_boundary_before_kara(nodes: list[TaggedNode], kara_index: int) -> int:
     boundary = kara_index
     for index in range(kara_index - 1, -1, -1):
+        surface = nodes[index].node.surface
+        pos1 = getattr(nodes[index].node.feature, "pos1", "")
+        if pos1 in {"助詞", "補助記号"} or surface in {"。", "、", "；", ";"}:
+            break
+        boundary = index
+    return boundary
+
+
+def left_boundary_before_particle(nodes: list[TaggedNode], particle_index: int) -> int:
+    boundary = particle_index
+    for index in range(particle_index - 1, -1, -1):
         surface = nodes[index].node.surface
         pos1 = getattr(nodes[index].node.feature, "pos1", "")
         if pos1 in {"助詞", "補助記号"} or surface in {"。", "、", "；", ";"}:
