@@ -89,17 +89,22 @@ def test_sareteiru_chain_still_maps_to_suru():
 
 def test_phrase_annotations_are_hover_metadata_not_canonical_tokens():
     rows = rows_by_surface(
-        "作品を通して、明治末期から大正初期にかけて活躍した。",
+        "作品を通して、明治末期から大正初期にかけて活躍し、子沢山の上に高齢だった。",
         {
             "作品::名詞": "work",
             "通す::動詞": "to pass through",
             "明治::名詞": "Meiji era",
+            "沢山::形状詞": "many",
         },
     )
 
     assert rows["作品"]["phrases"][0]["canonical"] == "を通して::表現"
     assert rows["通し"]["phrases"][0]["translation"].startswith("through")
     assert rows["明治"]["phrases"][0]["canonical"] == "から…にかけて::表現"
+    assert rows["子"]["phrases"][0]["canonical"] == "の上に::表現"
+    assert rows["沢山"]["phrases"][0]["canonical"] == "の上に::表現"
+    assert rows["上"]["phrases"][0]["translation"].startswith("on top of")
+    assert "の" not in rows
 
 
 def test_dictionary_confirmed_compound_inherits_constituent_tokens():

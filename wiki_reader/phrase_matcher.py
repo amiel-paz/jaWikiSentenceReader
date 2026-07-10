@@ -39,6 +39,12 @@ def detect_phrase_matches(nodes: list[TaggedNode], text: str) -> list[dict[str, 
             and nodes[index + 2].node.surface == "て"
         ):
             matches.append(tooshite_match(nodes, text, index))
+        if (
+            nodes[index].node.surface == "の"
+            and nodes[index + 1].node.surface == "上"
+            and nodes[index + 2].node.surface == "に"
+        ):
+            matches.append(no_ue_ni_match(nodes, text, index))
     return matches
 
 
@@ -88,6 +94,18 @@ def tooshite_match(nodes: list[TaggedNode], text: str, wo_index: int) -> dict[st
         "end": end,
         "canonical": canonical,
         "translation": "through; via; by means of; throughout",
+    }
+
+
+def no_ue_ni_match(nodes: list[TaggedNode], text: str, no_index: int) -> dict[str, Any]:
+    start = nodes[left_boundary_before_particle(nodes, no_index)].start
+    end = nodes[no_index + 2].end
+    return {
+        "surface": text[start:end],
+        "start": start,
+        "end": end,
+        "canonical": "の上に::表現",
+        "translation": "on top of; in addition to; not only ... but also ...",
     }
 
 
