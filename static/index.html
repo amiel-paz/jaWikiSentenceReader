@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Wikipedia Sentence Reader</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="topbar">
+        <h1 id="article-title">Wikipedia Sentence Reader</h1>
+        <div class="theme-toggle" role="group" aria-label="Theme">
+          <button id="theme-light" type="button" aria-pressed="true">Light</button>
+          <button id="theme-dark" type="button" aria-pressed="false">Dark</button>
+        </div>
+      </section>
+
+      <section id="landing" class="landing">
+        <form id="article-form" class="article-form">
+          <label for="article-url">Japanese Wikipedia article URL or title</label>
+          <div class="input-row">
+            <input
+              id="article-url"
+              name="article-url"
+              type="text"
+              value="https://ja.wikipedia.org/wiki/夏目漱石"
+              autocomplete="off"
+            />
+            <button type="submit">Start</button>
+          </div>
+          <p id="form-status" class="status" aria-live="polite"></p>
+        </form>
+      </section>
+
+      <section id="reader" class="reader" aria-label="Sentence reader" hidden>
+        <div class="sentence-index" id="sentence-index"></div>
+        <p id="sentence" class="sentence"></p>
+        <div class="nav">
+          <button id="previous" type="button" aria-label="Previous sentence">←</button>
+          <button id="next" type="button" aria-label="Next sentence">→</button>
+        </div>
+      </section>
+
+      <footer id="session-footer" class="session-footer" hidden>
+        <button id="end-session" class="end-button" type="button">End Session</button>
+      </footer>
+    </main>
+
+    <div id="popover" class="popover" role="dialog" aria-live="polite" hidden>
+      <div class="popover-surface" id="popover-surface"></div>
+      <div class="popover-token" id="popover-token"></div>
+      <div class="popover-reading" id="popover-reading"></div>
+      <div class="popover-translation" id="popover-translation"></div>
+      <div class="popover-places" id="popover-places"></div>
+      <div class="popover-phrases" id="popover-phrases"></div>
+      <div class="popover-inherited" id="popover-inherited"></div>
+      <div class="popover-actions">
+        <button class="choice recognized" type="button" data-choice="recognized">
+          recognized
+        </button>
+        <button class="choice unrecognized" type="button" data-choice="unrecognized">
+          unrecognized
+        </button>
+        <button class="choice always" type="button" data-choice="always">
+          always recognized
+        </button>
+      </div>
+    </div>
+
+    <div id="confirm" class="confirm" hidden>
+      <div class="confirm-panel" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+        <h2 id="confirm-title">End this session?</h2>
+        <p>This will close the sentence reader and save this reading session to global history.</p>
+        <div class="session-summary" aria-label="Session token summary">
+          <div class="summary-header">
+            <span>Token</span>
+            <span data-short-label="Enc.">Encounters</span>
+            <span data-short-label="Rec.">Recognition</span>
+          </div>
+          <div id="session-summary-list" class="summary-list"></div>
+        </div>
+        <div class="confirm-actions">
+          <button id="cancel-end" type="button">Cancel</button>
+          <button id="confirm-end" class="end-button" type="button">End Session</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

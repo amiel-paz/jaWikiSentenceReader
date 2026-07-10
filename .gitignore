@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Generated dictionary assets. Rebuild with scripts/build_dictionary_index.py.
+data/dictionary.sqlite
+data/wikidata_place_cache.sqlite
+data/wikimedia_reading_cache.sqlite
+data/dictionary_sources/
+
+# Local runtime/cache files.
+instance/
+.DS_Store
