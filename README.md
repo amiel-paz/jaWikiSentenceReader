@@ -1,4 +1,4 @@
-# Wikipedia Sentence Reader
+# jaWikiSentenceReader
 
 Local prototype for reading Japanese Wikipedia articles one sentence at a time.
 
