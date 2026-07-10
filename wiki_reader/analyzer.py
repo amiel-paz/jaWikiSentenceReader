@@ -27,6 +27,7 @@ from .wikimedia_readings import WikimediaReadingProvider, default_reading_provid
 TRACKED_POS = {"名詞", "動詞", "形容詞", "形状詞", "副詞", "接続詞", "接頭辞", "代名詞"}
 GRAMMAR_TOKEN_TRANSLATIONS = {
     ("助詞", "ほど"): "to the extent that; so much that; degree/extent",
+    ("接続詞", "また"): "also; additionally; moreover; furthermore",
 }
 
 
@@ -297,7 +298,9 @@ def analyzer_canonical_token(node) -> str:
     pos = getattr(node.feature, "pos1", "") or "*"
     lemma = getattr(node.feature, "lemma", "") or ""
     orth_base = getattr(node.feature, "orthBase", "") or ""
-    if pos == "名詞" and lemma and orth_base and kana_only(orth_base) and has_kanji(lemma):
+    if orth_base == "する":
+        return f"する::{pos}"
+    if lemma and orth_base and kana_only(orth_base) and has_kanji(lemma):
         return f"{lemma}::{pos}"
     return canonical_token(node, "lemma_pos")
 
@@ -441,14 +444,7 @@ def verb_chain_token(
 
 
 def verb_chain_canonical(base) -> str:
-    pos = getattr(base.feature, "pos1", "") or "*"
-    lemma = getattr(base.feature, "lemma", "") or ""
-    orth_base = getattr(base.feature, "orthBase", "") or ""
-    if orth_base == "する":
-        return f"する::{pos}"
-    if lemma and orth_base and kana_only(orth_base) and has_kanji(lemma):
-        return f"{lemma}::{pos}"
-    return canonical_token(base, "lemma_pos")
+    return analyzer_canonical_token(base)
 
 
 def kana_only(text: str) -> bool:

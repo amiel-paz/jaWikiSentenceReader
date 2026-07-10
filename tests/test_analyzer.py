@@ -51,7 +51,7 @@ def test_heading_text_is_analyzed_and_marked_with_ranges():
 
 def test_load_bearing_pos_and_grammar_tokens_are_mapped_without_all_particles():
     rows = rows_by_surface(
-        "ただし、大抵の訴訟も裁くほどで、かなりの権力を持った。",
+        "また、ただし、大抵の訴訟も裁くほどで、かなりの権力を持った。",
         {
             "ただし::接続詞": "but; however",
             "大抵::副詞": "mostly; usually",
@@ -59,6 +59,8 @@ def test_load_bearing_pos_and_grammar_tokens_are_mapped_without_all_particles():
         },
     )
 
+    assert rows["また"]["canonical"] == "又::接続詞"
+    assert rows["また"]["translation"] == "also; additionally; moreover; furthermore"
     assert rows["ただし"]["pos1"] == "接続詞"
     assert rows["大抵"]["pos1"] == "副詞"
     assert rows["ほど"]["canonical"] == "ほど::助詞"
@@ -79,15 +81,16 @@ def test_te_iru_passive_chain_uses_semantic_base_verb():
     assert token["translation"] == "to say; to utter; to declare"
 
 
-def test_kana_written_nominal_uses_kanji_lemma_to_avoid_homophone_gloss():
+def test_kana_written_tokens_use_kanji_lemma_to_avoid_homophone_gloss():
     rows = rows_by_surface(
-        "高齢で出産したことから恥じた。",
-        {"事::名詞": "thing; matter"},
+        "高齢で出産したことからいう。",
+        {"事::名詞": "thing; matter", "言う::動詞": "to say"},
     )
 
-    token = rows["こと"]
-    assert token["canonical"] == "事::名詞"
-    assert token["translation"] == "thing; matter"
+    assert rows["こと"]["canonical"] == "事::名詞"
+    assert rows["こと"]["translation"] == "thing; matter"
+    assert rows["いう"]["canonical"] == "言う::動詞"
+    assert rows["いう"]["translation"] == "to say"
 
 
 def test_sareteiru_chain_still_maps_to_suru():
