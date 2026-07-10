@@ -138,3 +138,25 @@ def test_dictionary_confirmed_compound_inherits_constituent_tokens():
     inherited = {item["canonical"] for item in token["inherited_tokens"]}
     assert token["translation"] == "individualism"
     assert {"個人::名詞", "主義::名詞"} <= inherited
+
+
+def test_dictionary_confirmed_numeric_compound_is_single_token_without_inheritance():
+    rows = rows_by_surface(
+        "3歳頃には一代で傾いた。",
+        {
+            "歳::接尾辞": "... years old; age (of) ...",
+            "頃::名詞": "around; about",
+            "一代::名詞": "generation; lifetime; age",
+            "一::名詞": "one",
+            "代::名詞": "world; society; public",
+            "傾く::動詞": "to decline",
+        },
+    )
+
+    assert "3" not in rows
+    assert rows["一代"]["canonical"] == "一代::名詞"
+    assert rows["一代"]["hiragana"] == "いちだい"
+    assert rows["一代"]["translation"] == "generation; lifetime; age"
+    assert rows["一代"].get("inherited_tokens") == []
+    assert "一" not in rows
+    assert "代" not in rows

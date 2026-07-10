@@ -56,7 +56,9 @@ def create_schema(connection: sqlite3.Connection) -> None:
             headword TEXT NOT NULL,
             reading TEXT NOT NULL,
             gloss TEXT NOT NULL,
-            priority INTEGER NOT NULL
+            priority INTEGER NOT NULL,
+            sense_index INTEGER NOT NULL,
+            sense_pos TEXT NOT NULL
         )
         """
     )
@@ -70,8 +72,10 @@ def insert_jmdict(connection: sqlite3.Connection, archive_path: Path) -> None:
             item["text"] for item in entry.get("kana", [])
         ]
         readings = [item["text"] for item in entry.get("kana", [])]
-        gloss = jmdict_gloss(entry)
-        if gloss:
+        for sense_index, sense in enumerate(entry.get("sense", []), start=1):
+            gloss = jmdict_sense_gloss(sense)
+            if not gloss:
+                continue
             rows.extend(
                 lookup_rows(
                     source="JMdict",
@@ -80,9 +84,11 @@ def insert_jmdict(connection: sqlite3.Connection, archive_path: Path) -> None:
                     readings=readings,
                     gloss=gloss,
                     priority=0 if entry_is_common(entry) else 20,
+                    sense_index=sense_index,
+                    sense_pos=",".join(sense.get("partOfSpeech", [])),
                 )
             )
-    connection.executemany("INSERT INTO dictionary_lookup VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
+    connection.executemany("INSERT INTO dictionary_lookup VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
 
 
 def insert_jmnedict(connection: sqlite3.Connection, archive_path: Path) -> None:
@@ -103,9 +109,11 @@ def insert_jmnedict(connection: sqlite3.Connection, archive_path: Path) -> None:
                     readings=readings,
                     gloss=gloss,
                     priority=10,
+                    sense_index=0,
+                    sense_pos="",
                 )
             )
-    connection.executemany("INSERT INTO dictionary_lookup VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
+    connection.executemany("INSERT INTO dictionary_lookup VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
 
 
 def load_zipped_json(path: Path) -> dict:
@@ -115,12 +123,20 @@ def load_zipped_json(path: Path) -> dict:
 
 
 def lookup_rows(
-    *, source: str, entry_id: str, headwords: list[str], readings: list[str], gloss: str, priority: int
-) -> Iterable[tuple[str, str, str, str, str, str, int]]:
+    *,
+    source: str,
+    entry_id: str,
+    headwords: list[str],
+    readings: list[str],
+    gloss: str,
+    priority: int,
+    sense_index: int,
+    sense_pos: str,
+) -> Iterable[tuple[str, str, str, str, str, str, int, int, str]]:
     for headword in headwords:
         for reading in readings or [""]:
             for key in lookup_keys(headword, reading):
-                yield (key, source, entry_id, headword, reading, gloss, priority)
+                yield (key, source, entry_id, headword, reading, gloss, priority, sense_index, sense_pos)
 
 
 def lookup_keys(headword: str, reading: str) -> list[str]:
@@ -135,15 +151,12 @@ def katakana_to_hiragana(text: str) -> str:
     )
 
 
-def jmdict_gloss(entry: dict) -> str:
+def jmdict_sense_gloss(sense: dict) -> str:
     glosses = []
-    for sense in entry.get("sense", []):
-        for gloss in sense.get("gloss", []):
-            if gloss.get("lang") == "eng" and gloss.get("text"):
-                glosses.append(str(gloss["text"]))
-        if glosses:
-            break
-    return "; ".join(dict.fromkeys(glosses[:3]))
+    for gloss in sense.get("gloss", []):
+        if gloss.get("lang") == "eng" and gloss.get("text"):
+            glosses.append(str(gloss["text"]))
+    return "; ".join(dict.fromkeys(glosses[:4]))
 
 
 def jmnedict_gloss(entry: dict) -> str:
