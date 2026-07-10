@@ -531,7 +531,20 @@ function sessionSummaryRows() {
       encounters: counts.encounters,
       recognitions: counts.recognitions,
     };
-  }).filter((row) => row.encounters > 0);
+  }).filter((row) => row.encounters > 0)
+    .sort(compareSessionSummaryRows);
+}
+
+function compareSessionSummaryRows(left, right) {
+  const ratioDelta = recognitionValue(left) - recognitionValue(right);
+  if (ratioDelta !== 0) return ratioDelta;
+  const encounterDelta = left.encounters - right.encounters;
+  if (encounterDelta !== 0) return encounterDelta;
+  return left.surface.localeCompare(right.surface, "ja");
+}
+
+function recognitionValue(row) {
+  return row.recognitions / row.encounters;
 }
 
 function summaryRowElement(row) {
