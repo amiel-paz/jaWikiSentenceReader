@@ -45,6 +45,12 @@ def detect_phrase_matches(nodes: list[TaggedNode], text: str) -> list[dict[str, 
             and nodes[index + 2].node.surface == "に"
         ):
             matches.append(no_ue_ni_match(nodes, text, index))
+        if (
+            nodes[index].node.surface == "もの"
+            and nodes[index + 1].node.surface == "で"
+            and nodes[index + 2].node.surface == "ある"
+        ):
+            matches.append(mono_de_aru_match(nodes, text, index))
     return matches
 
 
@@ -106,6 +112,18 @@ def no_ue_ni_match(nodes: list[TaggedNode], text: str, no_index: int) -> dict[st
         "end": end,
         "canonical": "の上に::表現",
         "translation": "on top of; in addition to; not only ... but also ...",
+    }
+
+
+def mono_de_aru_match(nodes: list[TaggedNode], text: str, mono_index: int) -> dict[str, Any]:
+    start = nodes[mono_index].start
+    end = nodes[mono_index + 2].end
+    return {
+        "surface": text[start:end],
+        "start": start,
+        "end": end,
+        "canonical": "ものである::表現",
+        "translation": "it is/was the case that; explanatory assertion",
     }
 
 
