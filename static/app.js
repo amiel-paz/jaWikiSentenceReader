@@ -18,6 +18,7 @@ const sessionFooter = document.querySelector("#session-footer");
 const articleForm = document.querySelector("#article-form");
 const articleUrl = document.querySelector("#article-url");
 const formStatus = document.querySelector("#form-status");
+const loadingBar = document.querySelector("#loading-bar");
 const sentenceIndex = document.querySelector("#sentence-index");
 const sentenceEl = document.querySelector("#sentence");
 const previousButton = document.querySelector("#previous");
@@ -103,22 +104,62 @@ document.addEventListener("mousemove", (event) => {
 });
 
 async function loadArticle(value) {
-  formStatus.textContent = "Loading article…";
-  articleForm.querySelector("button").disabled = true;
+  setLoading(true, "Starting article load…", 0);
   try {
-    const response = await fetch("/api/article", {
+    const startResponse = await fetch("/api/article-jobs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url: value }),
     });
-    const payload = await response.json();
-    if (!response.ok) throw new Error(payload.error || "Could not load article.");
-    startSession(payload);
+    const startPayload = await startResponse.json();
+    if (!startResponse.ok) {
+      throw new Error(startPayload.error || "Could not start article load.");
+    }
+    const article = await waitForArticleJob(startPayload.job_id);
+    startSession(article);
   } catch (error) {
     formStatus.textContent = error.message;
   } finally {
-    articleForm.querySelector("button").disabled = false;
+    setLoading(false);
   }
+}
+
+async function waitForArticleJob(jobId) {
+  while (true) {
+    await delay(250);
+    const response = await fetch(`/api/article-jobs/${jobId}`);
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.error || "Could not check article loading progress.");
+    }
+    const total = Number(payload.total) || 0;
+    const processed = Number(payload.processed) || 0;
+    const progress = Number(payload.progress) || 0;
+    const message = total > 0
+      ? `Analyzing sentence ${processed} of ${total}...`
+      : payload.message || "Loading article...";
+    setLoading(true, message, progress);
+    if (payload.status === "complete") return payload.article;
+    if (payload.status === "error") {
+      throw new Error(payload.error || payload.message || "Could not load article.");
+    }
+  }
+}
+
+function delay(milliseconds) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+function setLoading(isLoading, message = "", progress = 0) {
+  formStatus.textContent = message;
+  articleForm.querySelector("button").disabled = isLoading;
+  articleUrl.disabled = isLoading;
+  loadingBar.hidden = !isLoading;
+  loadingBar.setAttribute("aria-valuenow", String(Math.round(progress * 100)));
+  loadingBar.querySelector(".loading-fill").style.inlineSize = `${Math.max(
+    0,
+    Math.min(1, progress),
+  ) * 100}%`;
 }
 
 function startSession(article) {
@@ -222,27 +263,27 @@ function renderSentence(sentence) {
   let cursor = 0;
   const headingRanges = sentence.heading_ranges ?? [];
   for (const token of sentence.tokens) {
-    const index = sentence.display_text.indexOf(token.surface, cursor);
-    if (index < 0) continue;
-    if (index > cursor) {
-      appendTextSegment(parts, sentence.display_text, cursor, index, headingRanges);
+    const range = tokenDisplayRange(sentence, token, cursor);
+    if (!range) continue;
+    if (range.start > cursor) {
+      appendTextSegment(parts, sentence.display_text, cursor, range.start, headingRanges);
     }
     const span = document.createElement("span");
     span.className = [
       "token",
       tokenClass(sentence.id, token.canonical),
-      rangeOverlapsHeading(index, index + token.surface.length, headingRanges)
+      rangeOverlapsHeading(range.start, range.end, headingRanges)
         ? "heading-token"
         : "",
     ].filter(Boolean).join(" ");
     span.tabIndex = 0;
-    span.textContent = token.surface;
-    span.addEventListener("mouseenter", (event) => showPopover(event.currentTarget, token));
+    span.textContent = sentence.display_text.slice(range.start, range.end);
+    span.addEventListener("mouseenter", (event) => showPopover(event.currentTarget, token, event));
     span.addEventListener("mouseleave", schedulePopoverClose);
-    span.addEventListener("focus", (event) => showPopover(event.currentTarget, token));
+    span.addEventListener("focus", (event) => showPopover(event.currentTarget, token, event));
     span.addEventListener("blur", schedulePopoverClose);
     parts.push(span);
-    cursor = index + token.surface.length;
+    cursor = range.end;
   }
   if (cursor < sentence.display_text.length) {
     appendTextSegment(
@@ -254,6 +295,38 @@ function renderSentence(sentence) {
     );
   }
   return parts;
+}
+
+function tokenDisplayRange(sentence, token, cursor) {
+  const exactIndex = sentence.display_text.indexOf(token.surface, cursor);
+  if (exactIndex >= 0) {
+    return { start: exactIndex, end: exactIndex + token.surface.length };
+  }
+  if (!Number.isFinite(token.start) || !Number.isFinite(token.end)) return null;
+  const start = analysisOffsetToDisplayOffset(token.start, sentence.suppressed_spans ?? []);
+  const end = analysisOffsetToDisplayOffset(token.end, sentence.suppressed_spans ?? []);
+  if (start < cursor || end <= start || end > sentence.display_text.length) return null;
+  const displaySurface = sentence.display_text.slice(start, end);
+  if (compactForMatch(displaySurface) !== compactForMatch(token.surface)) return null;
+  return { start, end };
+}
+
+function analysisOffsetToDisplayOffset(offset, suppressedSpans) {
+  let removed = 0;
+  for (const span of suppressedSpans) {
+    const start = Number(span.start);
+    const end = Number(span.end);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
+    const analysisStart = start - removed;
+    if (offset >= analysisStart) {
+      removed += end - start;
+    }
+  }
+  return offset + removed;
+}
+
+function compactForMatch(value) {
+  return String(value).replace(/\s+/g, "");
 }
 
 function appendTextSegment(parts, text, start, end, headingRanges) {
@@ -297,7 +370,7 @@ function sentenceMark(sentenceId, canonical) {
   return state.sentenceMarks.get(markKey(sentenceId, canonical));
 }
 
-function showPopover(anchor, token) {
+function showPopover(anchor, token, event) {
   cancelPopoverClose();
   activeAnchor = anchor;
   state.activeToken = { ...token, sentenceId: currentSentence().id };
@@ -309,7 +382,7 @@ function showPopover(anchor, token) {
   popoverPhrases.textContent = phraseLabel(token);
   popoverInherited.textContent = inheritedLabel(token);
   popover.hidden = false;
-  positionPopover(anchor);
+  positionPopover(anchor, event);
 }
 
 function schedulePopoverClose() {
@@ -335,19 +408,23 @@ function hidePopover() {
   state.activeToken = null;
 }
 
-function positionPopover(anchor) {
-  const gap = 2;
+function positionPopover(anchor, event) {
+  const gap = 8;
   const edge = 12;
   const rect = anchor.getBoundingClientRect();
+  const pointer =
+    event && Number.isFinite(event.clientX) && Number.isFinite(event.clientY)
+      ? { x: event.clientX, y: event.clientY }
+      : lastPointer;
   const popoverHeight = popover.offsetHeight;
   const popoverWidth = popover.offsetWidth;
-  let top = rect.bottom + gap;
+  let top = pointer.y + gap;
   if (top + popoverHeight > window.innerHeight - edge) {
-    top = rect.top - popoverHeight - gap;
+    top = pointer.y - popoverHeight - gap;
   }
-  let left = rect.left;
+  let left = pointer.x + gap;
   if (left + popoverWidth > window.innerWidth - edge) {
-    left = window.innerWidth - popoverWidth - edge;
+    left = pointer.x - popoverWidth - gap;
   }
   popover.style.top = `${Math.max(edge, top)}px`;
   popover.style.left = `${Math.max(edge, left)}px`;
@@ -378,7 +455,7 @@ function pointInsideExpandedRect(x, y, rect, padding) {
 }
 
 function pointInsideBridge(x, y, anchorRect, popoverRect) {
-  const padding = 10;
+  const padding = 24;
   const left = Math.min(anchorRect.left, popoverRect.left) - padding;
   const right = Math.max(anchorRect.right, popoverRect.right) + padding;
   const top = Math.min(anchorRect.bottom, popoverRect.bottom) - padding;

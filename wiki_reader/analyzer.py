@@ -24,11 +24,46 @@ from .wikidata_places import (
 from .wikimedia_readings import WikimediaReadingProvider, default_reading_provider
 
 
-TRACKED_POS = {"名詞", "動詞", "形容詞", "形状詞", "副詞", "接続詞", "接頭辞", "代名詞"}
+TRACKED_POS = {
+    "名詞",
+    "動詞",
+    "形容詞",
+    "形状詞",
+    "副詞",
+    "接続詞",
+    "接頭辞",
+    "代名詞",
+    "連体詞",
+}
 GRAMMAR_TOKEN_TRANSLATIONS = {
     ("助詞", "ほど"): "to the extent that; so much that; degree/extent",
     ("接続詞", "また"): "also; additionally; moreover; furthermore",
 }
+COUNTER_TRANSLATIONS = {
+    "話": "counter for stories, episodes, chapters, or talks",
+    "巻": "counter for volumes, scrolls, or reels",
+    "回": "counter for occurrences, rounds, or times",
+    "個": "counter for small objects or units",
+    "冊": "counter for bound volumes or books",
+    "歳": "counter for years of age",
+    "年": "counter for years",
+    "人": "counter for people",
+    "本": "counter for long cylindrical objects; books/films in some contexts",
+    "号": "number; issue number; edition marker",
+}
+COUNTER_READINGS = {
+    "話": "わ",
+    "巻": "かん",
+    "回": "かい",
+    "個": "こ",
+    "冊": "さつ",
+    "歳": "さい",
+    "年": "ねん",
+    "人": "にん",
+    "本": "ほん",
+    "号": "ごう",
+}
+GEMINATE_COUNTERS = {"巻", "回", "個", "冊", "歳"}
 
 
 def analyze_article(
@@ -144,6 +179,18 @@ def analyze_sentence(
             index += 1
             continue
         if NUMERIC_RE.fullmatch(node.surface):
+            counter_items = numeric_counter_items(tagged, index)
+            if counter_items is not None:
+                rows.append(
+                    numeric_counter_token(
+                        counter_items,
+                        translation_provider,
+                        phrase_matches,
+                        place_matches,
+                    )
+                )
+                index += len(counter_items)
+                continue
             dictionary_compound_items = dictionary_noun_compound_items(
                 tagged, index, translation_provider
             )
@@ -201,6 +248,31 @@ def analyze_sentence(
             )
             index += len(fixed_expression_items)
             continue
+        person_name_items = dictionary_person_name_items(tagged, index, translation_provider)
+        if person_name_items is not None:
+            rows.append(
+                compound_token(
+                    person_name_items,
+                    translation_provider,
+                    phrase_matches,
+                    place_matches,
+                )
+            )
+            index += len(person_name_items)
+            continue
+        tsutsu_aru_end = tsutsu_aru_chain_end_index(tagged, index)
+        if tsutsu_aru_end is not None:
+            rows.append(
+                tsutsu_aru_chain_token(
+                    tagged[index:tsutsu_aru_end],
+                    sentence,
+                    translation_provider,
+                    phrase_matches,
+                    place_matches,
+                )
+            )
+            index = tsutsu_aru_end
+            continue
         te_iru_end = te_iru_chain_end_index(tagged, index)
         if te_iru_end is not None:
             rows.append(
@@ -231,7 +303,11 @@ def analyze_sentence(
         if node_is_noun(node):
             compound_items = [item]
             next_index = index + 1
-            while next_index < len(tagged) and node_is_nominal_suffix(tagged[next_index].node):
+            while (
+                next_index < len(tagged)
+                and node_is_nominal_suffix(tagged[next_index].node)
+                and not phrase_only_nominal_suffix(tagged[next_index].node)
+            ):
                 compound_items.append(tagged[next_index])
                 next_index += 1
             if len(compound_items) > 1:
@@ -398,7 +474,7 @@ def compound_token(
 ) -> dict[str, Any]:
     nodes = [item.node for item in items]
     surface = "".join(node.surface for node in nodes)
-    reading = reading_fields(nodes)
+    reading = compound_reading_fields(nodes, translation_provider) or reading_fields(nodes)
     canonical = f"{surface}::名詞"
     row = {
         "surface": surface,
@@ -413,7 +489,9 @@ def compound_token(
         "inherited_tokens": inherited_compound_tokens(nodes, translation_provider),
     }
     apply_dictionary_reading_override(row, translation_provider)
-    row["translation"] = translation_provider.lookup(row)
+    row["translation"] = translation_provider.lookup(row) or family_suffix_translation(
+        nodes, row["inherited_tokens"]
+    )
     return row
 
 
@@ -480,6 +558,35 @@ def wikimedia_reading_token(
     return row
 
 
+def numeric_counter_token(
+    items: list[object],
+    translation_provider: TranslationProvider,
+    phrase_matches: list[dict[str, Any]],
+    place_matches: list[dict[str, Any]],
+) -> dict[str, Any]:
+    number = normalized_number_text(str(items[0].node.surface))
+    counter = str(items[-1].node.surface)
+    surface = "".join(str(item.node.surface) for item in items)
+    hiragana = numeric_counter_reading(number, counter, items[-1].node)
+    row = {
+        "surface": surface,
+        "pos1": "助数詞",
+        "pos2": "数量表現",
+        "canonical": f"{counter}::助数詞",
+        "hiragana": hiragana,
+        "romaji": kana_to_romaji(hiragana),
+        "reading_status": "counter" if hiragana else "missing",
+        "start": items[0].start,
+        "end": items[-1].end,
+        "quantity": number,
+        "counter": counter,
+        "phrases": overlapping_phrases(phrase_matches, items[0].start, items[-1].end),
+        "places": overlapping_places(place_matches, items[0].start, items[-1].end),
+    }
+    row["translation"] = counter_translation(counter) or translation_provider.lookup(row)
+    return row
+
+
 def fixed_expression_token(
     items: list[object],
     sentence: str,
@@ -503,6 +610,38 @@ def fixed_expression_token(
         "places": overlapping_places(place_matches, items[0].start, items[-1].end),
     }
     row["translation"] = translation_provider.lookup(row)
+    return row
+
+
+def tsutsu_aru_chain_token(
+    items: list[object],
+    sentence: str,
+    translation_provider: TranslationProvider,
+    phrase_matches: list[dict[str, Any]],
+    place_matches: list[dict[str, Any]],
+) -> dict[str, Any]:
+    nodes = [item.node for item in items]
+    surface = sentence[items[0].start : items[-1].end]
+    phrase = tsutsu_aru_phrase(surface, items[0].start, items[-1].end)
+    row = {
+        "surface": surface,
+        "pos1": "動詞",
+        "pos2": tsutsu_aru_pos2(nodes),
+        "canonical": tsutsu_aru_canonical(nodes),
+        **tsutsu_aru_reading(surface, nodes),
+        "start": items[0].start,
+        "end": items[-1].end,
+        "phrases": [
+            *overlapping_phrases(phrase_matches, items[0].start, items[-1].end),
+            phrase,
+        ],
+        "places": overlapping_places(place_matches, items[0].start, items[-1].end),
+        "inherited_tokens": tsutsu_aru_inherited_tokens(nodes, translation_provider),
+    }
+    apply_dictionary_reading_override(row, translation_provider)
+    row["translation"] = translation_provider.lookup(row) or tsutsu_aru_base_translation(
+        nodes, translation_provider
+    )
     return row
 
 
@@ -536,6 +675,118 @@ def verb_chain_canonical(base) -> str:
     return analyzer_canonical_token(base)
 
 
+def tsutsu_aru_chain_end_index(tagged: list[object], start: int) -> int | None:
+    if sahen_noun_tsutsu_aru_chain(tagged, start):
+        return tsutsu_aru_end_after_aru(tagged, start + 3)
+    if verb_tsutsu_aru_chain(tagged, start):
+        return tsutsu_aru_end_after_aru(tagged, start + 2)
+    return None
+
+
+def sahen_noun_tsutsu_aru_chain(tagged: list[object], start: int) -> bool:
+    if start + 3 >= len(tagged):
+        return False
+    noun = tagged[start].node
+    return (
+        node_is_sahen_noun(noun)
+        and suru_stem_node(tagged[start + 1].node)
+        and tagged[start + 2].node.surface == "つつ"
+        and aru_auxiliary_node(tagged[start + 3].node)
+    )
+
+
+def verb_tsutsu_aru_chain(tagged: list[object], start: int) -> bool:
+    if start + 2 >= len(tagged):
+        return False
+    return (
+        node_is_verb(tagged[start].node)
+        and tagged[start + 1].node.surface == "つつ"
+        and aru_auxiliary_node(tagged[start + 2].node)
+    )
+
+
+def tsutsu_aru_end_after_aru(tagged: list[object], aru_index: int) -> int:
+    end = aru_index + 1
+    if end < len(tagged) and tagged[end].node.surface == "た":
+        end += 1
+    return end
+
+
+def tsutsu_aru_canonical(nodes: list[object]) -> str:
+    if len(nodes) >= 4 and node_is_sahen_noun(nodes[0]) and suru_stem_node(nodes[1]):
+        return f"{nodes[0].surface}する::動詞"
+    return analyzer_canonical_token(nodes[0])
+
+
+def tsutsu_aru_pos2(nodes: list[object]) -> str:
+    base = nodes[0]
+    if node_is_sahen_noun(base):
+        return "サ変可能"
+    return getattr(base.feature, "pos2", "") or "*"
+
+
+def tsutsu_aru_reading(surface: str, nodes: list[object]) -> dict[str, str]:
+    if len(nodes) >= 4 and node_is_sahen_noun(nodes[0]) and suru_stem_node(nodes[1]):
+        noun_reading = katakana_to_hiragana(base_kana(nodes[0]))
+        tail = "".join(node.surface for node in nodes[1:])
+        if noun_reading and kana_only(tail):
+            hiragana = f"{noun_reading}{tail}"
+            return {
+                "hiragana": hiragana,
+                "romaji": kana_to_romaji(hiragana),
+                "reading_status": "available",
+            }
+    return reading_fields_for_surface_or_nodes(surface, nodes)
+
+
+def tsutsu_aru_base_translation(
+    nodes: list[object], translation_provider: TranslationProvider
+) -> str:
+    if len(nodes) >= 4 and node_is_sahen_noun(nodes[0]) and suru_stem_node(nodes[1]):
+        return str(plain_token_row(nodes[0], translation_provider).get("translation", ""))
+    return ""
+
+
+def tsutsu_aru_inherited_tokens(
+    nodes: list[object], translation_provider: TranslationProvider
+) -> list[dict[str, str]]:
+    if len(nodes) < 4 or not node_is_sahen_noun(nodes[0]) or not suru_stem_node(nodes[1]):
+        return []
+    row = plain_token_row(nodes[0], translation_provider)
+    return [
+        {
+            "surface": str(row["surface"]),
+            "canonical": str(row["canonical"]),
+            "hiragana": str(row["hiragana"]),
+            "romaji": str(row["romaji"]),
+            "reading_status": str(row["reading_status"]),
+            "translation": str(row.get("translation", "")),
+        }
+    ]
+
+
+def tsutsu_aru_phrase(surface: str, start: int, end: int) -> dict[str, str]:
+    return {
+        "surface": surface,
+        "start": str(start),
+        "end": str(end),
+        "canonical": "つつある::表現",
+        "translation": "to be in the process of; to be gradually doing/becoming",
+    }
+
+
+def suru_stem_node(node) -> bool:
+    return node_is_verb(node) and getattr(node.feature, "orthBase", "") == "する"
+
+
+def aru_auxiliary_node(node) -> bool:
+    return (
+        node_is_verb(node)
+        and getattr(node.feature, "orthBase", "") == "ある"
+        and getattr(node.feature, "pos2", "") == "非自立可能"
+    )
+
+
 def kana_only(text: str) -> bool:
     return bool(text) and re.fullmatch(r"[ぁ-ゖァ-ヺー]+", text) is not None
 
@@ -553,6 +804,61 @@ def place_translation(places: list[dict[str, str]]) -> str:
     if label and description:
         return f"{label}: {description}"
     return label or description
+
+
+def family_suffix_translation(
+    nodes: list[object], inherited_tokens: list[dict[str, str]]
+) -> str:
+    if len(nodes) < 2:
+        return ""
+    suffix = nodes[-1]
+    if suffix.surface != "家" or not node_is_nominal_suffix(suffix):
+        return ""
+    head = inherited_tokens[0] if inherited_tokens else {}
+    name = str(head.get("translation") or head.get("surface") or "").strip()
+    if not name:
+        name = "".join(node.surface for node in nodes[:-1])
+    return f"{name} family; {name} household"
+
+
+def compound_reading_fields(
+    nodes: list[object], translation_provider: TranslationProvider
+) -> dict[str, str] | None:
+    if len(nodes) != 2:
+        return None
+    head, suffix = nodes
+    if suffix.surface != "同士" or not node_is_nominal_suffix(suffix):
+        return None
+    head_reading = preferred_dictionary_node_reading(head, translation_provider)
+    suffix_reading = katakana_to_hiragana(base_kana(suffix)) or "どうし"
+    if not head_reading or not suffix_reading:
+        return None
+    hiragana = f"{head_reading}{suffix_reading}"
+    return {
+        "hiragana": hiragana,
+        "romaji": kana_to_romaji(hiragana),
+        "reading_status": "dictionary",
+    }
+
+
+def preferred_dictionary_node_reading(
+    node, translation_provider: TranslationProvider
+) -> str:
+    lookup_row = getattr(translation_provider, "lookup_row", None)
+    if not callable(lookup_row):
+        return katakana_to_hiragana(base_kana(node))
+    row = lookup_row(
+        {
+            "surface": node.surface,
+            "pos1": getattr(node.feature, "pos1", "") or "*",
+            "pos2": getattr(node.feature, "pos2", "") or "*",
+            "canonical": analyzer_canonical_token(node),
+            "hiragana": katakana_to_hiragana(base_kana(node)),
+        }
+    )
+    if row is None or str(row[3]) != str(node.surface):
+        return katakana_to_hiragana(base_kana(node))
+    return katakana_to_hiragana(str(row[4]))
 
 
 def next_lexical_node(tagged: list[object], index: int) -> object | None:
@@ -611,6 +917,44 @@ def dictionary_noun_compound_items(
     return None
 
 
+def dictionary_person_name_items(
+    tagged: list[object],
+    start: int,
+    translation_provider: TranslationProvider,
+) -> list[object] | None:
+    if not node_is_person_name(tagged[start].node):
+        return None
+    candidates: list[list[object]] = []
+    for end in range(start + 2, min(len(tagged), start + 6) + 1):
+        items = tagged[start:end]
+        if not all(person_name_compound_node(item.node) for item in items):
+            break
+        candidates.append(items)
+    for items in reversed(candidates):
+        if dictionary_confirmed_person_name(items, translation_provider):
+            return items
+    return None
+
+
+def dictionary_confirmed_person_name(
+    items: list[object], translation_provider: TranslationProvider
+) -> bool:
+    nodes = [item.node for item in items]
+    surface = "".join(node.surface for node in nodes)
+    row = {
+        "surface": surface,
+        "pos1": "名詞",
+        "pos2": "固有名詞",
+        "canonical": f"{surface}::名詞",
+        **reading_fields(nodes),
+    }
+    lookup_row = getattr(translation_provider, "lookup_row", None)
+    if callable(lookup_row):
+        result = lookup_row(row)
+        return result is not None and str(result[3]) == surface
+    return bool(translation_provider.lookup(row))
+
+
 def dictionary_confirmed_compound(
     items: list[object], translation_provider: TranslationProvider
 ) -> bool:
@@ -664,7 +1008,10 @@ def dictionary_confirmed_fixed_expression(
     lookup_sense_pos = getattr(translation_provider, "lookup_sense_pos", None)
     if not callable(lookup_sense_pos):
         return False
-    return "conj" in set(lookup_sense_pos(row))
+    sense_pos = set(lookup_sense_pos(row))
+    if "conj" in sense_pos:
+        return True
+    return "exp" in sense_pos and len(surface) >= 3
 
 
 def dictionary_expression_reading(
@@ -688,6 +1035,123 @@ def dictionary_expression_reading(
 
 def expression_connector_node(node) -> bool:
     return getattr(node.feature, "pos1", "") in {"助詞", "助動詞", "接続詞"}
+
+
+def numeric_counter_items(tagged: list[object], start: int) -> list[object] | None:
+    if start + 1 >= len(tagged):
+        return None
+    number = tagged[start].node
+    counter = tagged[start + 1].node
+    if not NUMERIC_RE.fullmatch(str(number.surface)):
+        return None
+    if not numeric_counter_node(counter):
+        return None
+    return tagged[start : start + 2]
+
+
+def numeric_counter_node(node) -> bool:
+    if not token_node_is_lexical(node):
+        return False
+    if str(node.surface) in COUNTER_READINGS:
+        return True
+    return (
+        getattr(node.feature, "pos1", "") == "名詞"
+        and getattr(node.feature, "pos3", "") == "助数詞可能"
+    )
+
+
+def normalized_number_text(text: str) -> str:
+    return text.translate(str.maketrans("０１２３４５６７８９", "0123456789"))
+
+
+def numeric_counter_reading(number_text: str, counter: str, counter_node) -> str:
+    number = int(number_text)
+    if counter == "人" and number in {1, 2}:
+        return "ひとり" if number == 1 else "ふたり"
+    number_reading = japanese_number_reading(number)
+    suffix = COUNTER_READINGS.get(counter) or katakana_to_hiragana(base_kana(counter_node))
+    if not number_reading or not suffix:
+        return ""
+    if counter in GEMINATE_COUNTERS:
+        number_reading = geminated_number_reading(number_reading)
+    return f"{number_reading}{suffix}"
+
+
+def japanese_number_reading(number: int) -> str:
+    if number == 0:
+        return "れい"
+    if number >= 10000:
+        high, low = divmod(number, 10000)
+        high_reading = japanese_number_reading(high)
+        low_reading = japanese_number_reading_below_10000(low) if low else ""
+        return f"{high_reading}まん{low_reading}"
+    return japanese_number_reading_below_10000(number)
+
+
+def japanese_number_reading_below_10000(number: int) -> str:
+    ones = {
+        1: "いち",
+        2: "に",
+        3: "さん",
+        4: "よん",
+        5: "ご",
+        6: "ろく",
+        7: "なな",
+        8: "はち",
+        9: "きゅう",
+    }
+    hundreds = {
+        1: "ひゃく",
+        2: "にひゃく",
+        3: "さんびゃく",
+        4: "よんひゃく",
+        5: "ごひゃく",
+        6: "ろっぴゃく",
+        7: "ななひゃく",
+        8: "はっぴゃく",
+        9: "きゅうひゃく",
+    }
+    thousands = {
+        1: "せん",
+        2: "にせん",
+        3: "さんぜん",
+        4: "よんせん",
+        5: "ごせん",
+        6: "ろくせん",
+        7: "ななせん",
+        8: "はっせん",
+        9: "きゅうせん",
+    }
+    parts: list[str] = []
+    thousands_digit, remainder = divmod(number, 1000)
+    hundreds_digit, remainder = divmod(remainder, 100)
+    tens_digit, ones_digit = divmod(remainder, 10)
+    if thousands_digit:
+        parts.append(thousands[thousands_digit])
+    if hundreds_digit:
+        parts.append(hundreds[hundreds_digit])
+    if tens_digit:
+        parts.append("じゅう" if tens_digit == 1 else f"{ones[tens_digit]}じゅう")
+    if ones_digit:
+        parts.append(ones[ones_digit])
+    return "".join(parts)
+
+
+def geminated_number_reading(reading: str) -> str:
+    replacements = {
+        "いち": "いっ",
+        "ろく": "ろっ",
+        "はち": "はっ",
+        "じゅう": "じゅっ",
+    }
+    for suffix, replacement in replacements.items():
+        if reading.endswith(suffix):
+            return f"{reading[: -len(suffix)]}{replacement}"
+    return reading
+
+
+def counter_translation(counter: str) -> str:
+    return COUNTER_TRANSLATIONS.get(counter, "counter/classifier")
 
 
 def detect_wikimedia_reading_matches(
@@ -808,13 +1272,24 @@ def reading_fields_for_surface_or_nodes(
 def inherited_compound_tokens(
     nodes: list[object], translation_provider: TranslationProvider
 ) -> list[dict[str, str]]:
+    if all(person_name_compound_node(node) for node in nodes) and any(
+        node_is_person_name(node) for node in nodes
+    ) and nodes[-1].surface != "家":
+        return []
     if any(node_is_numeric_noun(node) for node in nodes):
         return []
     inherited: list[dict[str, str]] = []
     noun_nodes = [node for node in nodes if node_is_noun(node)]
     suffix_nodes = [node for node in nodes if node_is_nominal_suffix(node)]
+    use_dictionary_head_reading = any(node.surface == "同士" for node in suffix_nodes)
     for node in noun_nodes:
         row = plain_token_row(node, translation_provider)
+        if use_dictionary_head_reading:
+            reading = preferred_dictionary_node_reading(node, translation_provider)
+            if reading:
+                row["hiragana"] = reading
+                row["romaji"] = kana_to_romaji(reading)
+                row["reading_status"] = "dictionary"
         inherited.append(
             {
                 "surface": str(row["surface"]),
@@ -879,12 +1354,34 @@ def node_is_common_noun(node) -> bool:
     return node_is_noun(node) and getattr(node.feature, "pos2", "") == "普通名詞"
 
 
+def node_is_proper_noun(node) -> bool:
+    return node_is_noun(node) and getattr(node.feature, "pos2", "") == "固有名詞"
+
+
+def node_is_person_name(node) -> bool:
+    return node_is_proper_noun(node) and getattr(node.feature, "pos3", "") == "人名"
+
+
+def person_name_compound_node(node) -> bool:
+    return node_is_person_name(node) or (
+        node_is_nominal_suffix(node) and not phrase_only_nominal_suffix(node)
+    )
+
+
+def node_is_sahen_noun(node) -> bool:
+    return node_is_common_noun(node) and getattr(node.feature, "pos3", "") == "サ変可能"
+
+
 def node_is_numeric_noun(node) -> bool:
     return node_is_noun(node) and getattr(node.feature, "pos2", "") == "数詞"
 
 
 def dictionary_compound_node(node) -> bool:
-    return node_is_common_noun(node) or node_is_numeric_noun(node)
+    return (
+        node_is_common_noun(node)
+        or node_is_proper_noun(node)
+        or node_is_numeric_noun(node)
+    )
 
 
 def node_is_verb(node) -> bool:
@@ -898,6 +1395,10 @@ def node_is_nominal_suffix(node) -> bool:
         getattr(node.feature, "pos1", "") == "接尾辞"
         and getattr(node.feature, "pos2", "") == "名詞的"
     )
+
+
+def phrase_only_nominal_suffix(node) -> bool:
+    return node.surface == "後"
 
 
 def previous_significant_node_is_numeric(nodes: list[object], index: int) -> bool:

@@ -1,12 +1,22 @@
 from __future__ import annotations
 
 from pathlib import Path
+from threading import Lock, Thread
+from typing import Any
+from uuid import uuid4
 
 from flask import Flask, jsonify, request, send_from_directory
 
-from .analyzer import analyze_article
-from .wiki_api import fetch_article_from_input
+from .analysis_cache import AnalysisCache
+from .analyzer import analyze_article, analyze_sentence_with_cache
+from .translation_provider import default_translation_provider
+from .wiki_api import ArticleRateLimitError, fetch_article_from_input
 from .wikidata_places import default_place_provider
+from .wikimedia_readings import default_reading_provider
+
+
+JOBS: dict[str, dict[str, Any]] = {}
+JOBS_LOCK = Lock()
 
 
 def create_app() -> Flask:
@@ -23,11 +33,47 @@ def create_app() -> Flask:
         payload = request.get_json(silent=True) or {}
         value = str(payload.get("url") or payload.get("title") or "")
         try:
-            article_payload = fetch_article_from_input(value)
-            analyzed = analyze_article(article_payload, base_dir=base_dir)
+            article_payload = fetch_article_from_input(value, cache_dir=base_dir / "data")
+            analysis_cache = AnalysisCache(base_dir / "data" / "analysis_cache.sqlite")
+            analyzed = analysis_cache.get(article_payload)
+            if analyzed is None:
+                analyzed = analyze_article(article_payload, base_dir=base_dir)
+                analysis_cache.set(article_payload, analyzed)
+        except ArticleRateLimitError as error:
+            return jsonify({"error": str(error)}), 429
         except Exception as error:
             return jsonify({"error": str(error)}), 400
         return jsonify(analyzed)
+
+    @app.post("/api/article-jobs")
+    def article_jobs():
+        payload = request.get_json(silent=True) or {}
+        value = str(payload.get("url") or payload.get("title") or "")
+        job_id = uuid4().hex
+        set_job(
+            job_id,
+            {
+                "id": job_id,
+                "status": "queued",
+                "message": "Queued",
+                "processed": 0,
+                "total": 0,
+                "progress": 0,
+            },
+        )
+        Thread(
+            target=run_article_job,
+            args=(job_id, value, base_dir),
+            daemon=True,
+        ).start()
+        return jsonify({"job_id": job_id})
+
+    @app.get("/api/article-jobs/<job_id>")
+    def article_job(job_id: str):
+        job = get_job(job_id)
+        if job is None:
+            return jsonify({"error": "Article job not found."}), 404
+        return jsonify(job)
 
     @app.post("/api/place-cache")
     def place_cache():
@@ -39,6 +85,96 @@ def create_app() -> Flask:
         return jsonify({"cached": provider.persist_places(places)})
 
     return app
+
+
+def run_article_job(job_id: str, value: str, base_dir: Path) -> None:
+    try:
+        update_job(job_id, status="fetching", message="Fetching article...", progress=0.02)
+        article_payload = fetch_article_from_input(value, cache_dir=base_dir / "data")
+        analysis_cache = AnalysisCache(base_dir / "data" / "analysis_cache.sqlite")
+        cached_analysis = analysis_cache.get(article_payload)
+        if cached_analysis is not None:
+            update_job(
+                job_id,
+                status="complete",
+                message="Article ready from cache.",
+                processed=len(cached_analysis.get("sentences", [])),
+                total=len(cached_analysis.get("sentences", [])),
+                progress=1,
+                article=cached_analysis,
+            )
+            return
+        sentence_entries = list(article_payload.get("sentences", []))
+        total = len(sentence_entries)
+        result = {
+            **{
+                key: article_payload.get(key)
+                for key in ("title", "canonicalurl", "revision_id", "revision_timestamp")
+            },
+            "sentences": [],
+        }
+        update_job(
+            job_id,
+            status="analyzing",
+            message=f"Analyzing sentence 0 of {total}...",
+            processed=0,
+            total=total,
+            progress=0 if total else 1,
+        )
+        provider = default_translation_provider(base_dir)
+        gazetteer = default_place_provider(base_dir)
+        readings = default_reading_provider(base_dir)
+        for index, sentence_entry in enumerate(sentence_entries, start=1):
+            result["sentences"].append(
+                {
+                    "id": f"sentence-{index}",
+                    **analyze_sentence_with_cache(
+                        sentence_entry,
+                        translation_provider=provider,
+                        place_provider=gazetteer,
+                        reading_provider=readings,
+                    ),
+                }
+            )
+            update_job(
+                job_id,
+                message=f"Analyzing sentence {index} of {total}...",
+                processed=index,
+                total=total,
+                progress=index / total if total else 1,
+            )
+        update_job(
+            job_id,
+            status="complete",
+            message="Article ready.",
+            processed=total,
+            total=total,
+            progress=1,
+            article=result,
+        )
+        analysis_cache.set(article_payload, result)
+    except ArticleRateLimitError as error:
+        update_job(job_id, status="error", message=str(error), error=str(error), progress=0)
+    except Exception as error:
+        update_job(job_id, status="error", message=str(error), error=str(error), progress=0)
+
+
+def set_job(job_id: str, values: dict[str, Any]) -> None:
+    with JOBS_LOCK:
+        JOBS[job_id] = dict(values)
+
+
+def get_job(job_id: str) -> dict[str, Any] | None:
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        return dict(job) if job is not None else None
+
+
+def update_job(job_id: str, **values: Any) -> None:
+    with JOBS_LOCK:
+        if job_id not in JOBS:
+            return
+        JOBS[job_id].update(values)
 
 
 if __name__ == "__main__":

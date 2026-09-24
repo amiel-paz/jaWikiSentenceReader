@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import sqlite3
+import re
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
-from .token_utils import hiragana_to_katakana, katakana_to_hiragana
+from .token_utils import hiragana_to_katakana, kana_to_romaji, katakana_to_hiragana
 
 
 class TranslationProvider(Protocol):
@@ -127,8 +128,21 @@ def select_row(
     pos2 = str(token.get("pos2", ""))
     token_headwords = exact_token_headwords(token)
     exact_headword_rows = [row for row in rows if str(row[3]) in token_headwords]
+    exact_jmdict_headwords = {
+        str(row[3]) for row in exact_headword_rows if str(row[1]) == "JMdict"
+    }
+    exact_headword_gloss_readings: dict[str, set[str]] = {}
+    for row in exact_headword_rows:
+        if not has_kanji(str(row[3])):
+            continue
+        exact_headword_gloss_readings.setdefault(str(row[0]), set()).add(
+            normalized_dictionary_reading(str(row[4]))
+        )
     exact_headword_gloss_counts = Counter(
-        str(row[0]) for row in exact_headword_rows if has_kanji(str(row[3]))
+        {
+            gloss: len(readings)
+            for gloss, readings in exact_headword_gloss_readings.items()
+        }
     )
 
     def sort_key(row: sqlite3.Row | tuple) -> tuple[object, ...]:
@@ -140,8 +154,15 @@ def select_row(
         priority = int(row[5])
         exact_headword = headword in token_headwords
         exact_reading = reading in {hiragana, katakana}
+        romanized_echo = (
+            exact_headword
+            and source == "JMnedict"
+            and headword in exact_jmdict_headwords
+            and gloss_is_romanized_reading(gloss, reading)
+        )
         return (
             0 if exact_headword else 1,
+            1 if romanized_echo else 0,
             0 if pos2 != "固有名詞" and source == "JMdict" else 1,
             priority,
             -exact_headword_gloss_counts[gloss] if exact_headword else 0,
@@ -231,12 +252,43 @@ def should_override_reading(
         for candidate in rows
         if str(candidate[3]) == headword and str(candidate[0]) == gloss
     ]
+    if (
+        str(row[1]) == "JMnedict"
+        and str(token.get("pos2", "")) == "固有名詞"
+        and str(token.get("surface", "")) == headword
+    ):
+        return True
+    if selected_jmdict_beat_current_romanized_name_echo(row, rows, current_reading, token):
+        return True
     supporting_readings = {
         katakana_to_hiragana(str(candidate[4]))
         for candidate in supporting_rows
         if str(candidate[4])
     }
     return len(supporting_readings) > 1
+
+
+def selected_jmdict_beat_current_romanized_name_echo(
+    row: sqlite3.Row | tuple,
+    rows: list[sqlite3.Row | tuple],
+    current_reading: str,
+    token: dict[str, Any],
+) -> bool:
+    if str(row[1]) != "JMdict":
+        return False
+    if str(row[3]) not in exact_token_headwords(token):
+        return False
+    current_reading_rows = [
+        candidate
+        for candidate in rows
+        if str(candidate[3]) in exact_token_headwords(token)
+        and katakana_to_hiragana(str(candidate[4])) == current_reading
+    ]
+    return bool(current_reading_rows) and all(
+        str(candidate[1]) == "JMnedict"
+        and gloss_is_romanized_reading(str(candidate[0]), str(candidate[4]))
+        for candidate in current_reading_rows
+    )
 
 
 def exact_token_headwords(token: dict[str, Any]) -> set[str]:
@@ -248,3 +300,42 @@ def exact_token_headwords(token: dict[str, Any]) -> set[str]:
 
 def has_kanji(text: str) -> bool:
     return any("\u4e00" <= char <= "\u9fff" for char in text)
+
+
+def gloss_is_romanized_reading(gloss: str, reading: str) -> bool:
+    normalized_gloss = normalized_romaji_text(gloss)
+    normalized_reading = normalized_romaji_text(kana_to_romaji(katakana_to_hiragana(reading)))
+    return bool(normalized_gloss) and normalized_gloss in romanized_reading_variants(
+        normalized_reading
+    )
+
+
+def normalized_romaji_text(text: str) -> str:
+    macrons = str.maketrans(
+        {
+            "ā": "a",
+            "ī": "i",
+            "ū": "u",
+            "ē": "e",
+            "ō": "o",
+            "Ā": "a",
+            "Ī": "i",
+            "Ū": "u",
+            "Ē": "e",
+            "Ō": "o",
+        }
+    )
+    return re.sub(r"[^a-z]", "", text.translate(macrons).lower())
+
+
+def romanized_reading_variants(reading: str) -> set[str]:
+    return {
+        reading,
+        reading.replace("ou", "o"),
+        reading.replace("uu", "u"),
+        reading.replace("oo", "o"),
+    }
+
+
+def normalized_dictionary_reading(reading: str) -> str:
+    return katakana_to_hiragana(reading)

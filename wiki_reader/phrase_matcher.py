@@ -4,6 +4,17 @@ from dataclasses import dataclass
 from typing import Any
 
 
+SOURCE_FRAMING_NOUNS = {
+    "一説": "according to one account; one theory says; some say",
+    "異説": "according to another theory/account; according to a differing view",
+    "学説": "according to a scholarly theory/view",
+    "俗説": "according to popular belief; according to a common story",
+    "通説": "according to the accepted/common view",
+    "定説": "according to the established theory/view",
+    "有力説": "according to a leading theory/view",
+}
+
+
 @dataclass(frozen=True)
 class TaggedNode:
     node: Any
@@ -26,6 +37,12 @@ def tagged_nodes(text: str, tagger) -> list[TaggedNode]:
 
 def detect_phrase_matches(nodes: list[TaggedNode], text: str) -> list[dict[str, Any]]:
     matches: list[dict[str, Any]] = []
+    for index, item in enumerate(nodes):
+        if nominal_go_suffix_node(item.node):
+            matches.append(nominal_go_suffix_match(nodes, text, index))
+        source_framing = source_framing_match(nodes, text, index)
+        if source_framing is not None:
+            matches.append(source_framing)
     for index in range(len(nodes) - 2):
         if (
             nodes[index].node.surface == "に"
@@ -127,6 +144,51 @@ def mono_de_aru_match(nodes: list[TaggedNode], text: str, mono_index: int) -> di
     }
 
 
+def nominal_go_suffix_match(
+    nodes: list[TaggedNode], text: str, go_index: int
+) -> dict[str, Any]:
+    start = nodes[left_boundary_before_suffix(nodes, go_index)].start
+    end = nodes[go_index].end
+    return {
+        "surface": text[start:end],
+        "start": start,
+        "end": end,
+        "canonical": "後::表現",
+        "translation": "after; following; since",
+    }
+
+
+def source_framing_match(
+    nodes: list[TaggedNode], text: str, noun_index: int
+) -> dict[str, Any] | None:
+    noun = nodes[noun_index].node
+    translation = SOURCE_FRAMING_NOUNS.get(str(getattr(noun, "surface", "")))
+    if not translation:
+        return None
+    if noun_index + 1 >= len(nodes):
+        return None
+    next_surface = str(getattr(nodes[noun_index + 1].node, "surface", ""))
+    if next_surface in {"には", "では"}:
+        end = nodes[noun_index + 1].end
+    elif (
+        noun_index + 2 < len(nodes)
+        and next_surface in {"に", "で"}
+        and str(getattr(nodes[noun_index + 2].node, "surface", "")) == "は"
+    ):
+        end = nodes[noun_index + 2].end
+    else:
+        return None
+    start = nodes[noun_index].start
+    surface = text[start:end]
+    return {
+        "surface": surface,
+        "start": start,
+        "end": end,
+        "canonical": f"{noun.surface}には::表現",
+        "translation": translation,
+    }
+
+
 def nearest_preceding_kara(nodes: list[TaggedNode], ni_index: int) -> int | None:
     for index in range(ni_index - 1, -1, -1):
         surface = nodes[index].node.surface
@@ -158,3 +220,22 @@ def left_boundary_before_particle(nodes: list[TaggedNode], particle_index: int) 
             break
         boundary = index
     return boundary
+
+
+def left_boundary_before_suffix(nodes: list[TaggedNode], suffix_index: int) -> int:
+    boundary = suffix_index
+    for index in range(suffix_index - 1, -1, -1):
+        surface = nodes[index].node.surface
+        pos1 = getattr(nodes[index].node.feature, "pos1", "")
+        if pos1 in {"助詞", "補助記号"} or surface in {"。", "、", "；", ";"}:
+            break
+        boundary = index
+    return boundary
+
+
+def nominal_go_suffix_node(node: Any) -> bool:
+    return (
+        getattr(node, "surface", "") == "後"
+        and getattr(node.feature, "pos1", "") == "接尾辞"
+        and getattr(node.feature, "pos2", "") == "名詞的"
+    )

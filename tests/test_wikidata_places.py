@@ -2,7 +2,11 @@ import sqlite3
 
 from wiki_reader.phrase_matcher import tagged_nodes
 from wiki_reader.token_utils import get_tagger
-from wiki_reader.wikidata_places import WikidataPlaceProvider, place_candidates
+from wiki_reader.wikidata_places import (
+    WikidataPlaceProvider,
+    detect_place_matches,
+    place_candidates,
+)
 
 
 def cache_count(path) -> int:
@@ -44,3 +48,28 @@ def test_place_results_are_transient_until_explicitly_persisted(tmp_path):
     assert persisted == 1
     assert cache_count(cache_path) == 1
     assert WikidataPlaceProvider(cache_path).cached("カムデン区") == payload
+
+
+class StaticPlaceProvider:
+    def prefetch(self, terms):
+        pass
+
+    def lookup(self, term):
+        if term == "横町":
+            return {
+                "id": "Q97186503",
+                "label": "横町",
+                "description": "",
+                "english_description": "Wikimedia disambiguation page",
+                "url": "https://ja.wikipedia.org/wiki/横町",
+            }
+        return None
+
+
+def test_disambiguation_pages_are_not_place_matches():
+    text = "馬場下横町出身。"
+    tagged = tagged_nodes(text, get_tagger())
+
+    matches = detect_place_matches(tagged, text, StaticPlaceProvider())
+
+    assert matches == []

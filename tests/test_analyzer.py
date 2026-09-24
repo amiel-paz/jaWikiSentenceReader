@@ -51,11 +51,12 @@ def test_heading_text_is_analyzed_and_marked_with_ranges():
 
 def test_load_bearing_pos_and_grammar_tokens_are_mapped_without_all_particles():
     rows = rows_by_surface(
-        "また、ただし、大抵の訴訟も裁くほどで、かなりの権力を持った。",
+        "また、ただし、大抵の訴訟も裁くほどで、かなりの権力を持ち、同じ奉公人と話した。",
         {
             "ただし::接続詞": "but; however",
             "大抵::副詞": "mostly; usually",
             "かなり::形状詞": "considerably",
+            "同じ::連体詞": "same",
         },
     )
 
@@ -63,6 +64,8 @@ def test_load_bearing_pos_and_grammar_tokens_are_mapped_without_all_particles():
     assert rows["また"]["translation"] == "also; additionally; moreover; furthermore"
     assert rows["ただし"]["pos1"] == "接続詞"
     assert rows["大抵"]["pos1"] == "副詞"
+    assert rows["同じ"]["pos1"] == "連体詞"
+    assert rows["同じ"]["translation"] == "same"
     assert rows["ほど"]["canonical"] == "ほど::助詞"
     assert rows["ほど"]["translation"].startswith("to the extent that")
     assert "の" not in rows
@@ -160,3 +163,174 @@ def test_dictionary_confirmed_numeric_compound_is_single_token_without_inheritan
     assert rows["一代"].get("inherited_tokens") == []
     assert "一" not in rows
     assert "代" not in rows
+
+
+def test_arabic_number_counter_spans_use_counter_readings():
+    rows = rows_by_surface("全700話で、単行本は全72巻と外伝1巻、50号。")
+
+    episode = rows["700話"]
+    assert episode["canonical"] == "話::助数詞"
+    assert episode["pos1"] == "助数詞"
+    assert episode["hiragana"] == "ななひゃくわ"
+    assert episode["romaji"] == "nanahyakuwa"
+    assert episode["translation"] == "counter for stories, episodes, chapters, or talks"
+
+    volumes = rows["72巻"]
+    assert volumes["canonical"] == "巻::助数詞"
+    assert volumes["hiragana"] == "ななじゅうにかん"
+    assert volumes["translation"] == "counter for volumes, scrolls, or reels"
+
+    extra = rows["1巻"]
+    assert extra["canonical"] == "巻::助数詞"
+    assert extra["hiragana"] == "いっかん"
+    issue = rows["50号"]
+    assert issue["canonical"] == "号::助数詞"
+    assert issue["hiragana"] == "ごじゅうごう"
+    assert issue["translation"] == "number; issue number; edition marker"
+    assert "話" not in rows
+    assert "巻" not in rows
+
+
+def test_family_suffix_compound_gets_generic_translation_fallback():
+    rows = rows_by_surface(
+        "夏目家は没落した。",
+        {
+            "夏目::名詞": "Natsume",
+            "没落::名詞": "ruin; fall",
+            "する::動詞": "to do",
+        },
+    )
+
+    token = rows["夏目家"]
+    assert token["canonical"] == "夏目家::名詞"
+    assert token["translation"] == "Natsume family; Natsume household"
+    assert token["inherited_tokens"] == [
+        {
+            "surface": "夏目",
+            "canonical": "夏目::名詞",
+            "hiragana": "なつめ",
+            "romaji": "natsume",
+            "reading_status": "available",
+            "translation": "Natsume",
+        }
+    ]
+    assert "家" not in rows
+
+
+def test_nominal_go_suffix_is_phrase_metadata_on_base_compound():
+    rows = rows_by_surface(
+        "明治維新後の混乱期であった。",
+        {
+            "明治維新::名詞": "Meiji Restoration",
+            "明治::名詞": "Meiji era",
+            "維新::名詞": "reformation",
+            "混乱::名詞": "confusion",
+            "期::名詞": "period",
+        },
+    )
+
+    token = rows["明治維新"]
+    assert token["canonical"] == "明治維新::名詞"
+    assert token["hiragana"] == "めいじいしん"
+    assert token["translation"] == "Meiji Restoration"
+    assert token["phrases"] == [
+        {
+            "surface": "明治維新後",
+            "canonical": "後::表現",
+            "translation": "after; following; since",
+        }
+    ]
+    assert "明治" not in rows
+    assert "維新" not in rows
+    assert "維新後" not in rows
+    assert "明治維新後" not in rows
+
+
+def test_nominal_go_suffix_does_not_create_single_noun_suffix_token():
+    rows = rows_by_surface(
+        "帰国後に働いた。",
+        {
+            "帰国::名詞": "returning to one's country",
+            "働く::動詞": "to work",
+        },
+    )
+
+    token = rows["帰国"]
+    assert token["canonical"] == "帰国::名詞"
+    assert token["phrases"] == [
+        {
+            "surface": "帰国後",
+            "canonical": "後::表現",
+            "translation": "after; following; since",
+        }
+    ]
+    assert "帰国後" not in rows
+
+
+def test_source_framing_account_phrases_are_hover_metadata():
+    rows = rows_by_surface(
+        "一説には八百屋で、通説では古道具屋だった。",
+        {
+            "一説::名詞": "one theory; one opinion; another theory",
+            "八百屋::名詞": "greengrocer",
+            "通説::名詞": "accepted theory; common view",
+            "古道具屋::名詞": "secondhand-goods shop",
+        },
+    )
+
+    assert rows["一説"]["phrases"] == [
+        {
+            "surface": "一説には",
+            "canonical": "一説には::表現",
+            "translation": "according to one account; one theory says; some say",
+        }
+    ]
+    assert rows["通説"]["phrases"] == [
+        {
+            "surface": "通説では",
+            "canonical": "通説には::表現",
+            "translation": "according to the accepted/common view",
+        }
+    ]
+    assert "には" not in rows
+    assert "では" not in rows
+
+
+def test_tsutsu_aru_chain_collapses_sahen_verb_with_aspect_phrase():
+    rows = rows_by_surface(
+        "没落しつつあった。",
+        {"没落::名詞": "ruin; fall; collapse; downfall"},
+    )
+
+    token = rows["没落しつつあった"]
+    assert token["canonical"] == "没落する::動詞"
+    assert token["hiragana"] == "ぼつらくしつつあった"
+    assert token["romaji"] == "botsurakushitsutsuatta"
+    assert token["translation"] == "ruin; fall; collapse; downfall"
+    assert token["phrases"][0]["canonical"] == "つつある::表現"
+    assert token["phrases"][0]["translation"].startswith("to be in the process")
+    assert token["inherited_tokens"] == [
+        {
+            "surface": "没落",
+            "canonical": "没落::名詞",
+            "hiragana": "ぼつらく",
+            "romaji": "botsuraku",
+            "reading_status": "available",
+            "translation": "ruin; fall; collapse; downfall",
+        }
+    ]
+    assert "し" not in rows
+    assert "あっ" not in rows
+
+
+def test_tsutsu_aru_chain_collapses_plain_verb_with_aspect_phrase():
+    rows = rows_by_surface(
+        "傾きつつある。",
+        {"傾く::動詞": "to decline"},
+    )
+
+    token = rows["傾きつつある"]
+    assert token["canonical"] == "傾く::動詞"
+    assert token["translation"] == "to decline"
+    assert token["phrases"][0]["canonical"] == "つつある::表現"
+    assert "ある" not in rows

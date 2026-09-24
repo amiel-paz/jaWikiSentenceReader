@@ -1,4 +1,11 @@
-from wiki_reader.wiki_api import first_sentence_entries, first_sentences, sentence_entries
+from wiki_reader import wiki_api
+from wiki_reader.wiki_api import (
+    ArticleCache,
+    fetch_article_from_input,
+    first_sentence_entries,
+    first_sentences,
+    sentence_entries,
+)
 
 
 def test_heading_context_attaches_only_to_first_following_sentence():
@@ -25,3 +32,37 @@ def test_first_sentence_helpers_still_apply_limit():
 
     assert first_sentences(text, limit=2) == ["文一。", "文二。"]
     assert len(first_sentence_entries(text, limit=2)) == 2
+
+
+def test_article_cache_round_trips_payload(tmp_path):
+    cache = ArticleCache(tmp_path / "article_cache.sqlite")
+    payload = {
+        "title": "夏目漱石",
+        "canonicalurl": "https://ja.wikipedia.org/wiki/夏目漱石",
+        "revision_id": 1,
+        "revision_timestamp": "2026-01-01T00:00:00Z",
+        "sentences": [{"text": "文。", "headings": []}],
+    }
+
+    cache.set("夏目漱石", payload)
+
+    assert cache.get("夏目漱石") == payload
+
+
+def test_fetch_article_uses_cache_before_network(monkeypatch, tmp_path):
+    cache = ArticleCache(tmp_path / "article_cache.sqlite")
+    payload = {
+        "title": "夏目漱石",
+        "canonicalurl": "https://ja.wikipedia.org/wiki/夏目漱石",
+        "revision_id": 1,
+        "revision_timestamp": "2026-01-01T00:00:00Z",
+        "sentences": [{"text": "文。", "headings": []}],
+    }
+    cache.set("夏目漱石", payload)
+
+    def fail_fetch(title):
+        raise AssertionError(f"network fetch should not run for cached title: {title}")
+
+    monkeypatch.setattr(wiki_api, "fetch_article", fail_fetch)
+
+    assert fetch_article_from_input("夏目漱石", cache_dir=tmp_path) == payload

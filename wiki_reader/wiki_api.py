@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
+from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError
 from urllib.parse import parse_qs, unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
@@ -13,18 +16,67 @@ SENTENCE_RE = re.compile(r".+?[。！？]")
 HEADING_RE = re.compile(r"^(=+)\s*(.*?)\s*\1$")
 
 
-def fetch_article_from_input(value: str) -> dict[str, Any]:
+class ArticleRateLimitError(RuntimeError):
+    pass
+
+
+def fetch_article_from_input(value: str, *, cache_dir: Path | None = None) -> dict[str, Any]:
     title = title_from_input(value)
+    cache = ArticleCache(cache_dir / "article_cache.sqlite") if cache_dir else None
+    if cache is not None:
+        cached = cache.get(title)
+        if cached is not None:
+            return cached
     payload = fetch_article(title)
     page = payload["query"]["pages"][0]
     text = str(page.get("extract", "")).strip()
-    return {
+    article = {
         "title": page.get("title", title),
         "canonicalurl": page.get("canonicalurl", ""),
         "revision_id": page.get("revisions", [{}])[0].get("revid"),
         "revision_timestamp": page.get("revisions", [{}])[0].get("timestamp"),
         "sentences": sentence_entries(text),
     }
+    if cache is not None:
+        cache.set(title, article)
+        actual_title = str(article.get("title", ""))
+        if actual_title and actual_title != title:
+            cache.set(actual_title, article)
+    return article
+
+
+class ArticleCache:
+    def __init__(self, path: Path):
+        self.path = path
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(self.path) as connection:
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS article_cache (
+                    title TEXT PRIMARY KEY,
+                    payload TEXT NOT NULL
+                )
+                """
+            )
+
+    def get(self, title: str) -> dict[str, Any] | None:
+        with sqlite3.connect(self.path) as connection:
+            row = connection.execute(
+                "SELECT payload FROM article_cache WHERE title = ?", (title,)
+            ).fetchone()
+        if row is None:
+            return None
+        return json.loads(str(row[0]))
+
+    def set(self, title: str, payload: dict[str, Any]) -> None:
+        with sqlite3.connect(self.path) as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO article_cache(title, payload)
+                VALUES (?, ?)
+                """,
+                (title, json.dumps(payload, ensure_ascii=False)),
+            )
 
 
 def title_from_input(value: str) -> str:
@@ -61,8 +113,15 @@ def fetch_article(title: str) -> dict[str, Any]:
         f"{API_URL}?{urlencode(query)}",
         headers={"Accept": "application/json", "User-Agent": USER_AGENT},
     )
-    with urlopen(request, timeout=30) as response:
-        payload = json.loads(response.read().decode("utf-8"))
+    try:
+        with urlopen(request, timeout=30) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except HTTPError as error:
+        if error.code == 429:
+            raise ArticleRateLimitError(
+                "Wikipedia rate-limited this request. Try again shortly, or reload a cached article."
+            ) from error
+        raise
     pages = payload.get("query", {}).get("pages", [])
     if not pages or pages[0].get("missing"):
         raise ValueError(f"Wikipedia page not found: {title}")

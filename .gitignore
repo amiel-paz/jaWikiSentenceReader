@@ -5,6 +5,9 @@ __pycache__/
 
 # Generated dictionary assets. Rebuild with scripts/build_dictionary_index.py.
 data/dictionary.sqlite
+data/analysis_cache.sqlite
+data/article_cache.sqlite
+data/tmp_place_probe.sqlite
 data/wikidata_place_cache.sqlite
 data/wikimedia_reading_cache.sqlite
 data/dictionary_sources/

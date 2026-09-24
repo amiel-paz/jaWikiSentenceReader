@@ -225,7 +225,7 @@ def detect_place_matches(
     hits: list[dict[str, Any]] = []
     for candidate in candidates:
         entity = provider.lookup(str(candidate["surface"]))
-        if entity is None:
+        if entity is None or disambiguation_entity(entity):
             continue
         hits.append({**candidate, "entity": entity})
     return select_non_overlapping_place_matches(hits)
@@ -275,6 +275,17 @@ def chunks(items: list[str], size: int) -> list[list[str]]:
 
 def needs_english_enrichment(payload: dict[str, str]) -> bool:
     return bool(payload.get("id")) and not bool(payload.get("english_label"))
+
+
+def disambiguation_entity(payload: dict[str, str]) -> bool:
+    descriptions = " ".join(
+        str(payload.get(key, ""))
+        for key in ("description", "english_description")
+    ).lower()
+    return (
+        "disambiguation page" in descriptions
+        or "曖昧さ回避" in descriptions
+    )
 
 
 def candidate_node(node) -> bool:
