@@ -52,9 +52,7 @@ const cancelEndButton = document.querySelector("#cancel-end");
 const confirmEndButton = document.querySelector("#confirm-end");
 const sessionSummaryList = document.querySelector("#session-summary-list");
 const ankiSyncStatus = document.querySelector("#anki-sync-status");
-let popoverCloseTimer = null;
 let activeAnchor = null;
-let lastPointer = { x: 0, y: 0 };
 
 setTheme(localStorage.getItem("wikiReaderTheme") === "dark" ? "dark" : "light");
 
@@ -115,20 +113,17 @@ popover.addEventListener("click", (event) => {
   if (!button || !state.activeToken) return;
   chooseToken(state.activeToken, button.dataset.choice);
 });
-popover.addEventListener("mouseenter", cancelPopoverClose);
-popover.addEventListener("mouseleave", schedulePopoverClose);
 
 document.addEventListener("click", (event) => {
   if (event.target.closest(".token") || event.target.closest("#popover")) return;
   hidePopover();
 });
-document.addEventListener("mousemove", (event) => {
-  lastPointer = { x: event.clientX, y: event.clientY };
-  if (!popover.hidden && pointerInsidePopoverArea(lastPointer.x, lastPointer.y)) {
-    cancelPopoverClose();
-  } else if (!popover.hidden && !popoverCloseTimer) {
-    schedulePopoverClose();
-  }
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || popover.hidden) return;
+  event.preventDefault();
+  const anchor = activeAnchor;
+  hidePopover();
+  anchor?.focus();
 });
 
 async function loadArticle(value) {
@@ -308,11 +303,17 @@ function renderSentence(sentence) {
         : "",
     ].filter(Boolean).join(" ");
     span.tabIndex = 0;
+    span.setAttribute("role", "button");
+    span.setAttribute("aria-haspopup", "dialog");
+    span.setAttribute("aria-expanded", "false");
     span.textContent = sentence.display_text.slice(range.start, range.end);
-    span.addEventListener("mouseenter", (event) => showPopover(event.currentTarget, token, event));
-    span.addEventListener("mouseleave", schedulePopoverClose);
-    span.addEventListener("focus", (event) => showPopover(event.currentTarget, token, event));
-    span.addEventListener("blur", schedulePopoverClose);
+    span.setAttribute("aria-label", `${span.textContent}: show token details`);
+    span.addEventListener("click", (event) => showPopover(event.currentTarget, token, event));
+    span.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      showPopover(event.currentTarget, token);
+    });
     parts.push(span);
     cursor = range.end;
   }
@@ -402,9 +403,14 @@ function sentenceMark(sentenceId, canonical) {
 }
 
 function showPopover(anchor, token, event) {
-  cancelPopoverClose();
   resetCardPreview();
+  if (activeAnchor && activeAnchor !== anchor) {
+    activeAnchor.classList.remove("active-token");
+    activeAnchor.setAttribute("aria-expanded", "false");
+  }
   activeAnchor = anchor;
+  activeAnchor.classList.add("active-token");
+  activeAnchor.setAttribute("aria-expanded", "true");
   state.activeToken = {
     ...token,
     sentenceId: currentSentence().id,
@@ -421,26 +427,11 @@ function showPopover(anchor, token, event) {
   positionPopover(anchor, event);
 }
 
-function schedulePopoverClose() {
-  cancelPopoverClose();
-  popoverCloseTimer = window.setTimeout(() => {
-    if (!popoverShouldStayOpen()) {
-      hidePopover();
-    }
-  }, 260);
-}
-
-function cancelPopoverClose() {
-  if (popoverCloseTimer) {
-    window.clearTimeout(popoverCloseTimer);
-    popoverCloseTimer = null;
-  }
-}
-
 function hidePopover() {
-  cancelPopoverClose();
   resetCardPreview();
   popover.hidden = true;
+  activeAnchor?.classList.remove("active-token");
+  activeAnchor?.setAttribute("aria-expanded", "false");
   activeAnchor = null;
   state.activeToken = null;
 }
@@ -521,7 +512,7 @@ function positionPopover(anchor, event) {
   const pointer =
     event && Number.isFinite(event.clientX) && Number.isFinite(event.clientY)
       ? { x: event.clientX, y: event.clientY }
-      : lastPointer;
+      : { x: rect.left + rect.width / 2, y: rect.bottom };
   const popoverHeight = popover.offsetHeight;
   const popoverWidth = popover.offsetWidth;
   let top = pointer.y + gap;
@@ -534,39 +525,6 @@ function positionPopover(anchor, event) {
   }
   popover.style.top = `${Math.max(edge, top)}px`;
   popover.style.left = `${Math.max(edge, left)}px`;
-}
-
-function popoverShouldStayOpen() {
-  if (popover.matches(":hover")) return true;
-  if (activeAnchor?.matches(":hover")) return true;
-  if (document.activeElement === activeAnchor) return true;
-  if (document.activeElement.closest?.("#popover")) return true;
-  return pointerInsidePopoverArea(lastPointer.x, lastPointer.y);
-}
-
-function pointerInsidePopoverArea(x, y) {
-  if (!activeAnchor || popover.hidden) return false;
-  const anchorRect = activeAnchor.getBoundingClientRect();
-  const popoverRect = popover.getBoundingClientRect();
-  return pointInsideExpandedRect(x, y, anchorRect, 8)
-    || pointInsideExpandedRect(x, y, popoverRect, 8)
-    || pointInsideBridge(x, y, anchorRect, popoverRect);
-}
-
-function pointInsideExpandedRect(x, y, rect, padding) {
-  return x >= rect.left - padding
-    && x <= rect.right + padding
-    && y >= rect.top - padding
-    && y <= rect.bottom + padding;
-}
-
-function pointInsideBridge(x, y, anchorRect, popoverRect) {
-  const padding = 24;
-  const left = Math.min(anchorRect.left, popoverRect.left) - padding;
-  const right = Math.max(anchorRect.right, popoverRect.right) + padding;
-  const top = Math.min(anchorRect.bottom, popoverRect.bottom) - padding;
-  const bottom = Math.max(anchorRect.top, popoverRect.top) + padding;
-  return x >= left && x <= right && y >= top && y <= bottom;
 }
 
 function chooseToken(token, choice) {
