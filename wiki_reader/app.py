@@ -5,10 +5,14 @@ from threading import Lock, Thread
 from typing import Any
 from uuid import uuid4
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, Response, jsonify, request, send_from_directory
 
 from .analysis_cache import AnalysisCache
 from .analyzer import analyze_article, analyze_sentence_with_cache
+from .anki_cards import build_anki_tsv
+from .anki_connect import AnkiConnectError, anki_status, sync_anki_cards
+from .anki_sync_log import AnkiSyncLog, validate_session_id
+from .private_articles import is_private_article_input, load_private_article
 from .translation_provider import default_translation_provider
 from .wiki_api import ArticleRateLimitError, fetch_article_from_input
 from .wikidata_places import default_place_provider
@@ -17,6 +21,7 @@ from .wikimedia_readings import default_reading_provider
 
 JOBS: dict[str, dict[str, Any]] = {}
 JOBS_LOCK = Lock()
+ANKI_SYNC_LOCK = Lock()
 
 
 def create_app() -> Flask:
@@ -33,7 +38,7 @@ def create_app() -> Flask:
         payload = request.get_json(silent=True) or {}
         value = str(payload.get("url") or payload.get("title") or "")
         try:
-            article_payload = fetch_article_from_input(value, cache_dir=base_dir / "data")
+            article_payload = fetch_article_payload(value, base_dir)
             analysis_cache = AnalysisCache(base_dir / "data" / "analysis_cache.sqlite")
             analyzed = analysis_cache.get(article_payload)
             if analyzed is None:
@@ -84,13 +89,57 @@ def create_app() -> Flask:
         provider = default_place_provider(base_dir)
         return jsonify({"cached": provider.persist_places(places)})
 
+    @app.post("/api/anki-export")
+    def anki_export():
+        payload = request.get_json(silent=True) or {}
+        cards = payload.get("cards") if isinstance(payload, dict) else None
+        if not isinstance(cards, list):
+            return jsonify({"error": "cards must be a list"}), 400
+        try:
+            body = build_anki_tsv(cards)
+        except ValueError as error:
+            return jsonify({"error": str(error)}), 400
+        return Response(
+            body,
+            content_type="text/tab-separated-values; charset=utf-8",
+            headers={
+                "Content-Disposition": 'attachment; filename="japanese-reader-cards.tsv"'
+            },
+        )
+
+    @app.get("/api/anki/status")
+    def anki_connection_status():
+        status = anki_status()
+        return jsonify(status), 200 if status["connected"] else 503
+
+    @app.post("/api/anki-sync")
+    def anki_sync():
+        payload = request.get_json(silent=True) or {}
+        cards = payload.get("cards") if isinstance(payload, dict) else None
+        if not isinstance(cards, list):
+            return jsonify({"error": "cards must be a list"}), 400
+        try:
+            session_id = validate_session_id(str(payload.get("session_id", "")))
+            with ANKI_SYNC_LOCK:
+                sync_log = AnkiSyncLog(base_dir / "data" / "anki_sync.sqlite")
+                previous = sync_log.get(session_id)
+                if previous is not None:
+                    return jsonify({**previous, "replayed": True})
+                result = sync_anki_cards(cards)
+                sync_log.save(session_id, result)
+        except ValueError as error:
+            return jsonify({"error": str(error)}), 400
+        except AnkiConnectError as error:
+            return jsonify({"error": str(error)}), 503
+        return jsonify(result)
+
     return app
 
 
 def run_article_job(job_id: str, value: str, base_dir: Path) -> None:
     try:
         update_job(job_id, status="fetching", message="Fetching article...", progress=0.02)
-        article_payload = fetch_article_from_input(value, cache_dir=base_dir / "data")
+        article_payload = fetch_article_payload(value, base_dir)
         analysis_cache = AnalysisCache(base_dir / "data" / "analysis_cache.sqlite")
         cached_analysis = analysis_cache.get(article_payload)
         if cached_analysis is not None:
@@ -157,6 +206,12 @@ def run_article_job(job_id: str, value: str, base_dir: Path) -> None:
         update_job(job_id, status="error", message=str(error), error=str(error), progress=0)
     except Exception as error:
         update_job(job_id, status="error", message=str(error), error=str(error), progress=0)
+
+
+def fetch_article_payload(value: str, base_dir: Path) -> dict[str, Any]:
+    if is_private_article_input(value):
+        return load_private_article(value, base_dir=base_dir)
+    return fetch_article_from_input(value, cache_dir=base_dir / "data")
 
 
 def set_job(job_id: str, values: dict[str, Any]) -> None:

@@ -18,7 +18,7 @@
 
       <section id="landing" class="landing">
         <form id="article-form" class="article-form">
-          <label for="article-url">Japanese Wikipedia article URL or title</label>
+          <label for="article-url">Japanese Wikipedia URL, title, or private article key</label>
           <div class="input-row">
             <input
               id="article-url"
@@ -54,6 +54,11 @@
 
       <footer id="session-footer" class="session-footer" hidden>
         <button id="end-session" class="end-button" type="button">End Session</button>
+        <small class="dictionary-attribution">
+          Vocabulary data from
+          <a href="https://www.edrdg.org/wiki/index.php/JMdict-EDICT_Dictionary_Project"
+             target="_blank" rel="noreferrer">JMdict/JMnedict (EDRDG)</a>
+        </small>
       </footer>
     </main>
 
@@ -81,7 +86,10 @@
     <div id="confirm" class="confirm" hidden>
       <div class="confirm-panel" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
         <h2 id="confirm-title">End this session?</h2>
-        <p>This will close the sentence reader and save this reading session to global history.</p>
+        <p>
+          This will sync every token from viewed sentences to Anki, apply its
+          Again/Good/Easy answer, and close the reader only after sync succeeds.
+        </p>
         <div class="session-summary" aria-label="Session token summary">
           <div class="summary-header">
             <span>Token</span>
@@ -90,6 +98,7 @@
           </div>
           <div id="session-summary-list" class="summary-list"></div>
         </div>
+        <p id="anki-sync-status" class="anki-sync-status"></p>
         <div class="confirm-actions">
           <button id="cancel-end" type="button">Cancel</button>
           <button id="confirm-end" class="end-button" type="button">End Session</button>

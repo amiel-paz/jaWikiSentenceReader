@@ -6,13 +6,12 @@ import sqlite3
 import zipfile
 from collections.abc import Iterable
 from pathlib import Path
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 
-RELEASE_TAG = "3.6.2+20260706150322"
 BASE_URL = "https://github.com/scriptin/jmdict-simplified/releases/download"
-JMDICT_URL = f"{BASE_URL}/3.6.2%2B20260706150322/jmdict-eng-{RELEASE_TAG}.json.zip"
-JMNEDICT_URL = f"{BASE_URL}/3.6.2%2B20260706150322/jmnedict-all-{RELEASE_TAG}.json.zip"
+LATEST_RELEASE_API = "https://api.github.com/repos/scriptin/jmdict-simplified/releases/latest"
 
 
 def main() -> int:
@@ -20,21 +19,57 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Build JMdict/JMnedict SQLite index.")
     parser.add_argument("--source-dir", type=Path, default=repo_dir / "data" / "dictionary_sources")
     parser.add_argument("--out", type=Path, default=repo_dir / "data" / "dictionary.sqlite")
+    parser.add_argument(
+        "--release-tag",
+        default="latest",
+        help="jmdict-simplified release tag, or 'latest' (default)",
+    )
     args = parser.parse_args()
 
+    release_tag = resolve_release_tag(args.release_tag)
+    release_path = quote(release_tag, safe="")
+    jmdict_url = f"{BASE_URL}/{release_path}/jmdict-eng-{release_tag}.json.zip"
+    jmnedict_url = f"{BASE_URL}/{release_path}/jmnedict-all-{release_tag}.json.zip"
     args.source_dir.mkdir(parents=True, exist_ok=True)
-    jmdict = ensure_download(args.source_dir / "jmdict-eng.zip", JMDICT_URL)
-    jmnedict = ensure_download(args.source_dir / "jmnedict-all.zip", JMNEDICT_URL)
+    jmdict = ensure_download(
+        args.source_dir / f"jmdict-eng-{release_tag}.zip", jmdict_url
+    )
+    jmnedict = ensure_download(
+        args.source_dir / f"jmnedict-all-{release_tag}.zip", jmnedict_url
+    )
     if args.out.exists():
         args.out.unlink()
     with sqlite3.connect(args.out) as connection:
         create_schema(connection)
+        connection.executemany(
+            "INSERT INTO dictionary_metadata(key, value) VALUES (?, ?)",
+            [
+                ("release_tag", release_tag),
+                ("jmdict_url", jmdict_url),
+                ("jmnedict_url", jmnedict_url),
+            ],
+        )
         insert_jmdict(connection, jmdict)
         insert_jmnedict(connection, jmnedict)
         connection.execute("CREATE INDEX dictionary_lookup_key_idx ON dictionary_lookup(lookup_key)")
         connection.commit()
-    print(f"Wrote {args.out}")
+    print(f"Wrote {args.out} from {release_tag}")
     return 0
+
+
+def resolve_release_tag(value: str) -> str:
+    if value != "latest":
+        return value
+    request = Request(
+        LATEST_RELEASE_API,
+        headers={"Accept": "application/vnd.github+json", "User-Agent": "wiki-sentence-reader/0.1"},
+    )
+    with urlopen(request, timeout=30) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    tag = str(payload.get("tag_name", "")).strip()
+    if not tag:
+        raise RuntimeError("Could not determine the latest JMdict release tag.")
+    return tag
 
 
 def ensure_download(path: Path, url: str) -> Path:
@@ -47,6 +82,14 @@ def ensure_download(path: Path, url: str) -> Path:
 
 
 def create_schema(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        CREATE TABLE dictionary_metadata (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+        """
+    )
     connection.execute(
         """
         CREATE TABLE dictionary_lookup (

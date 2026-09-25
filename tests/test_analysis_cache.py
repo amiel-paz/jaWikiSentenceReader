@@ -1,4 +1,6 @@
-from wiki_reader.analysis_cache import AnalysisCache
+import sqlite3
+
+from wiki_reader.analysis_cache import AnalysisCache, analyzer_version
 from wiki_reader.app import get_job, run_article_job, set_job
 
 
@@ -62,3 +64,23 @@ def test_article_job_uses_persistent_analysis_cache(monkeypatch, tmp_path):
     assert job["processed"] == 1
     assert job["total"] == 1
     assert job["article"] == analyzed
+
+
+def test_analyzer_version_tracks_dictionary_release_and_private_overrides(tmp_path):
+    dictionary = tmp_path / "dictionary.sqlite"
+    with sqlite3.connect(dictionary) as connection:
+        connection.execute("CREATE TABLE dictionary_metadata(key TEXT, value TEXT)")
+        connection.execute(
+            "INSERT INTO dictionary_metadata VALUES ('release_tag', 'test-release')"
+        )
+    private_dir = tmp_path / "private"
+    private_dir.mkdir()
+    overrides = private_dir / "vocabulary_overrides.json"
+    overrides.write_text("{}", encoding="utf-8")
+
+    before = analyzer_version(dictionary)
+    overrides.write_text('{"語": {"translation": "word"}}', encoding="utf-8")
+    after = analyzer_version(dictionary)
+
+    assert "test-release" in before
+    assert before != after

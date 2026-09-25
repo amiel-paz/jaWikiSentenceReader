@@ -111,6 +111,7 @@ def analyze_sentence_with_cache(
         place_provider,
         reading_provider,
     )
+    attach_vocabulary_mappings(rows, translation_provider)
     return {
         "display_text": sentence,
         "analysis_text": analysis_text,
@@ -119,6 +120,54 @@ def analyze_sentence_with_cache(
         "suppressed_spans": suppressed_spans,
         "tokens": rows,
         "unique_sentence_cache": build_sentence_token_cache(rows),
+    }
+
+
+def attach_vocabulary_mappings(
+    rows: list[dict[str, Any]], translation_provider: TranslationProvider
+) -> None:
+    for row in rows:
+        row["vocabulary"] = vocabulary_mapping(row, translation_provider)
+        for inherited in row.get("inherited_tokens", []):
+            if isinstance(inherited, dict):
+                inherited["vocabulary"] = vocabulary_mapping(
+                    inherited, translation_provider
+                )
+
+
+def vocabulary_mapping(
+    token: dict[str, Any], translation_provider: TranslationProvider
+) -> dict[str, str]:
+    canonical = str(token.get("canonical", ""))
+    lemma = canonical.split("::", 1)[0]
+    lookup = getattr(translation_provider, "lookup_entry", None)
+    entry = lookup(token) if callable(lookup) else None
+    if entry:
+        source = str(entry.get("source", ""))
+        entry_id = str(entry.get("entry_id", ""))
+        hiragana = str(entry.get("hiragana") or token.get("hiragana", ""))
+        return {
+            "token_id": canonical,
+            "dictionary_id": f"{source}:{entry_id}",
+            "source": source,
+            "headword": str(entry.get("headword") or lemma),
+            "hiragana": hiragana,
+            "romaji": str(entry.get("romaji") or kana_to_romaji(hiragana)),
+            "translation": str(
+                token.get("translation") or entry.get("translation", "")
+            ),
+            "mapping_status": "dictionary",
+        }
+    hiragana = str(token.get("hiragana", ""))
+    return {
+        "token_id": canonical,
+        "dictionary_id": f"UniDic:{canonical}",
+        "source": "UniDic",
+        "headword": lemma or str(token.get("surface", "")),
+        "hiragana": hiragana,
+        "romaji": str(token.get("romaji") or kana_to_romaji(hiragana)),
+        "translation": str(token.get("translation", "")),
+        "mapping_status": "token_fallback",
     }
 
 

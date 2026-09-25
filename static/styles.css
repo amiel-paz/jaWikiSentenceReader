@@ -270,8 +270,20 @@ h1 {
 
 .session-footer {
   display: flex;
+  align-items: center;
+  flex-direction: column;
+  gap: 10px;
   justify-content: center;
   margin-top: 22px;
+}
+
+.dictionary-attribution {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.dictionary-attribution a {
+  color: inherit;
 }
 
 .popover {
@@ -419,6 +431,11 @@ h1 {
 
 .summary-number {
   font-variant-numeric: tabular-nums;
+}
+
+.anki-sync-status {
+  line-height: 1.5;
+  margin-top: 14px;
 }
 
 .confirm-actions {

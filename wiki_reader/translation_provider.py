@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import re
+import json
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,11 +15,17 @@ class TranslationProvider(Protocol):
     def lookup(self, token: dict[str, Any]) -> str:
         """Return a short gloss for a token, or an empty string when unknown."""
 
+    def lookup_entry(self, token: dict[str, Any]) -> dict[str, str] | None:
+        """Return the selected vocabulary source entry when one is available."""
+
 
 @dataclass(frozen=True)
 class NullTranslationProvider:
     def lookup(self, token: dict[str, Any]) -> str:
         return ""
+
+    def lookup_entry(self, token: dict[str, Any]) -> dict[str, str] | None:
+        return None
 
 
 @dataclass(frozen=True)
@@ -42,6 +49,20 @@ class SqliteDictionaryProvider:
                 if gloss:
                     return gloss
         return ""
+
+    def lookup_entry(self, token: dict[str, Any]) -> dict[str, str] | None:
+        row = self.lookup_row(token)
+        if row is None:
+            return None
+        reading = katakana_to_hiragana(str(row[4]))
+        return {
+            "source": str(row[1]),
+            "entry_id": str(row[2]),
+            "headword": str(row[3]),
+            "hiragana": reading,
+            "romaji": kana_to_romaji(reading),
+            "translation": self.lookup(token),
+        }
 
     def lookup_reading(self, token: dict[str, Any]) -> str:
         row, rows = self.lookup_row_with_candidates(token)
@@ -80,11 +101,83 @@ class SqliteDictionaryProvider:
         return None, []
 
 
+@dataclass(frozen=True)
+class OverrideTranslationProvider:
+    base: TranslationProvider
+    entries: dict[str, dict[str, str]]
+
+    def lookup(self, token: dict[str, Any]) -> str:
+        entry = self.override_entry(token)
+        if entry and entry.get("translation"):
+            return str(entry["translation"])
+        return self.base.lookup(token)
+
+    def lookup_reading(self, token: dict[str, Any]) -> str:
+        entry = self.override_entry(token)
+        if entry and entry.get("hiragana"):
+            return str(entry["hiragana"])
+        lookup = getattr(self.base, "lookup_reading", None)
+        return str(lookup(token)) if callable(lookup) else ""
+
+    def lookup_sense_pos(self, token: dict[str, Any]) -> set[str]:
+        lookup = getattr(self.base, "lookup_sense_pos", None)
+        return set(lookup(token)) if callable(lookup) else set()
+
+    def lookup_row(self, token: dict[str, Any]) -> sqlite3.Row | tuple | None:
+        lookup = getattr(self.base, "lookup_row", None)
+        return lookup(token) if callable(lookup) else None
+
+    def lookup_entry(self, token: dict[str, Any]) -> dict[str, str] | None:
+        entry = self.override_entry(token)
+        if entry:
+            canonical = str(token.get("canonical", ""))
+            headword = str(entry.get("headword") or canonical.split("::", 1)[0])
+            hiragana = str(entry.get("hiragana") or token.get("hiragana", ""))
+            return {
+                "source": "Local override",
+                "entry_id": canonical,
+                "headword": headword,
+                "hiragana": hiragana,
+                "romaji": kana_to_romaji(hiragana),
+                "translation": str(entry.get("translation", "")),
+            }
+        lookup = getattr(self.base, "lookup_entry", None)
+        return lookup(token) if callable(lookup) else None
+
+    def override_entry(self, token: dict[str, Any]) -> dict[str, str] | None:
+        for key in lookup_keys(token):
+            entry = self.entries.get(key)
+            if entry is not None:
+                return entry
+        return None
+
+
 def default_translation_provider(base_dir: Path) -> TranslationProvider:
     dictionary_path = base_dir / "data" / "dictionary.sqlite"
     if dictionary_path.exists():
-        return SqliteDictionaryProvider(dictionary_path)
-    return NullTranslationProvider()
+        provider: TranslationProvider = SqliteDictionaryProvider(dictionary_path)
+    else:
+        provider = NullTranslationProvider()
+    override_path = base_dir / "data" / "private" / "vocabulary_overrides.json"
+    if override_path.is_file():
+        provider = OverrideTranslationProvider(provider, load_overrides(override_path))
+    return provider
+
+
+def load_overrides(path: Path) -> dict[str, dict[str, str]]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("Vocabulary overrides must contain a JSON object.")
+    entries: dict[str, dict[str, str]] = {}
+    for key, value in payload.items():
+        if not isinstance(value, dict):
+            raise ValueError(f"Vocabulary override {key!r} must contain an object.")
+        entries[str(key)] = {
+            str(field): str(field_value)
+            for field, field_value in value.items()
+            if field in {"headword", "hiragana", "translation"} and field_value
+        }
+    return entries
 
 
 def dictionary_columns(connection: sqlite3.Connection) -> set[str]:

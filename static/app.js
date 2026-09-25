@@ -4,11 +4,13 @@ const state = {
   sentenceMarks: new Map(),
   alwaysRecognized: new Set(),
   sessionCounts: new Map(),
+  viewedCounts: new Map(),
   globalCounts: new Map(),
   viewedSentenceIds: new Set(),
   alwaysLoggedKeys: new Set(),
   tokenCatalog: new Map(),
   activeToken: null,
+  sessionId: null,
 };
 
 const articleTitle = document.querySelector("#article-title");
@@ -38,11 +40,18 @@ const confirmOverlay = document.querySelector("#confirm");
 const cancelEndButton = document.querySelector("#cancel-end");
 const confirmEndButton = document.querySelector("#confirm-end");
 const sessionSummaryList = document.querySelector("#session-summary-list");
+const ankiSyncStatus = document.querySelector("#anki-sync-status");
 let popoverCloseTimer = null;
 let activeAnchor = null;
 let lastPointer = { x: 0, y: 0 };
 
 setTheme(localStorage.getItem("wikiReaderTheme") === "dark" ? "dark" : "light");
+
+const initialArticle = new URLSearchParams(window.location.search).get("article");
+if (initialArticle) {
+  articleUrl.value = initialArticle;
+  void loadArticle(initialArticle);
+}
 
 articleForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -56,6 +65,7 @@ endSessionButton.addEventListener("click", () => {
   hidePopover();
   renderSessionSummary();
   confirmOverlay.hidden = false;
+  void refreshAnkiStatus();
 });
 cancelEndButton.addEventListener("click", () => {
   confirmOverlay.hidden = true;
@@ -64,15 +74,18 @@ confirmEndButton.addEventListener("click", async () => {
   confirmEndButton.disabled = true;
   try {
     await persistEncounteredPlaces();
-    for (const [canonical, counts] of state.sessionCounts) {
+    const syncResult = await syncAnkiSession();
+    for (const row of sessionSummaryRows()) {
+      const canonical = row.canonical;
       const global = state.globalCounts.get(canonical) ?? {
         encounters: 0,
         recognitions: 0,
       };
-      global.encounters += counts.encounters;
-      global.recognitions += counts.recognitions;
+      global.encounters += row.encounters;
+      global.recognitions += row.recognitions;
       state.globalCounts.set(canonical, global);
     }
+    ankiSyncStatus.textContent = ankiSyncResultLabel(syncResult);
     confirmOverlay.hidden = true;
     resetToLanding();
   } catch (error) {
@@ -168,10 +181,13 @@ function startSession(article) {
   state.sentenceMarks = new Map();
   state.alwaysRecognized = new Set();
   state.sessionCounts = new Map();
+  state.viewedCounts = new Map();
   state.viewedSentenceIds = new Set();
   state.alwaysLoggedKeys = new Set();
   state.tokenCatalog = new Map();
   state.activeToken = null;
+  state.sessionId = globalThis.crypto?.randomUUID?.()
+    ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   articleTitle.textContent = article.title;
   landing.hidden = true;
   reader.hidden = false;
@@ -373,7 +389,11 @@ function sentenceMark(sentenceId, canonical) {
 function showPopover(anchor, token, event) {
   cancelPopoverClose();
   activeAnchor = anchor;
-  state.activeToken = { ...token, sentenceId: currentSentence().id };
+  state.activeToken = {
+    ...token,
+    sentenceId: currentSentence().id,
+    sentenceText: currentSentence().display_text,
+  };
   popoverSurface.textContent = token.surface;
   popoverToken.textContent = token.canonical;
   popoverReading.textContent = readingLabel(token);
@@ -508,7 +528,11 @@ function logAlwaysRecognizedForViewedSentences(canonicals) {
 
 function logAlwaysRecognizedForSentence(sentence, canonicalSet = state.alwaysRecognized) {
   for (const token of sentence.tokens) {
-    for (const item of affectedTokenEntries({ ...token, sentenceId: sentence.id })) {
+    for (const item of affectedTokenEntries({
+      ...token,
+      sentenceId: sentence.id,
+      sentenceText: sentence.display_text,
+    })) {
       if (!canonicalSet.has(item.canonical)) continue;
       registerTokenCatalog(item);
       const key = markKey(sentence.id, item.canonical);
@@ -527,10 +551,19 @@ function logAlwaysRecognizedForSentence(sentence, canonicalSet = state.alwaysRec
 function markSentenceViewed(sentence) {
   if (!state.viewedSentenceIds.has(sentence.id)) {
     state.viewedSentenceIds.add(sentence.id);
+    const sentenceCanonicals = new Set();
     for (const token of sentence.tokens) {
-      for (const item of affectedTokenEntries({ ...token, sentenceId: sentence.id })) {
+      for (const item of affectedTokenEntries({
+        ...token,
+        sentenceId: sentence.id,
+        sentenceText: sentence.display_text,
+      })) {
         registerTokenCatalog(item);
+        sentenceCanonicals.add(item.canonical);
       }
+    }
+    for (const canonical of sentenceCanonicals) {
+      state.viewedCounts.set(canonical, (state.viewedCounts.get(canonical) ?? 0) + 1);
     }
   }
   logAlwaysRecognizedForSentence(sentence);
@@ -559,7 +592,10 @@ function decrement(canonical, choice) {
 function affectedTokenEntries(token) {
   const values = [tokenCatalogEntry(token)];
   for (const inherited of token.inherited_tokens ?? []) {
-    values.push(tokenCatalogEntry(inherited));
+    values.push(tokenCatalogEntry({
+      ...inherited,
+      sentenceText: token.sentenceText,
+    }));
   }
   const seen = new Set();
   return values.filter((item) => {
@@ -577,6 +613,8 @@ function tokenCatalogEntry(token) {
     romaji: token.romaji || "",
     translation: token.translation || "",
     places: token.places ?? [],
+    vocabulary: token.vocabulary ?? null,
+    sentence: token.sentenceText || "",
   };
 }
 
@@ -592,9 +630,11 @@ function renderSessionSummary() {
     empty.className = "summary-row";
     empty.textContent = "No token encounters logged in this session.";
     sessionSummaryList.replaceChildren(empty);
+    renderAnkiSyncStatus();
     return;
   }
   sessionSummaryList.replaceChildren(...rows.map(summaryRowElement));
+  renderAnkiSyncStatus();
 }
 
 function sessionSummaryRows() {
@@ -605,11 +645,22 @@ function sessionSummaryRows() {
     };
     return {
       ...entry,
-      encounters: counts.encounters,
+      encounters: state.viewedCounts.get(entry.canonical) ?? 0,
       recognitions: counts.recognitions,
+      decisions: counts.encounters,
+      reviewState: reviewStateForToken(entry.canonical, counts),
     };
   }).filter((row) => row.encounters > 0)
     .sort(compareSessionSummaryRows);
+}
+
+function reviewStateForToken(canonical, counts) {
+  if (state.alwaysRecognized.has(canonical)) return "easy";
+  const viewed = state.viewedCounts.get(canonical) ?? 0;
+  if (viewed > 0 && counts.encounters === viewed && counts.recognitions === viewed) {
+    return "good";
+  }
+  return "again";
 }
 
 function compareSessionSummaryRows(left, right) {
@@ -652,7 +703,10 @@ function summaryRowElement(row) {
 
 function summaryMeta(row) {
   const reading = [row.hiragana, row.romaji].filter(Boolean).join(" · ");
-  return [row.canonical, reading, row.translation].filter(Boolean).join(" | ");
+  const answer = row.reviewState === "easy"
+    ? "Anki: Easy"
+    : row.reviewState === "good" ? "Anki: Good" : "Anki: Again";
+  return [row.canonical, reading, row.translation, answer].filter(Boolean).join(" | ");
 }
 
 function recognitionRatio(row) {
@@ -674,11 +728,114 @@ async function persistEncounteredPlaces() {
   }
 }
 
+function renderAnkiSyncStatus() {
+  const plan = ankiSyncPlan();
+  if (plan.candidates.length === 0) {
+    ankiSyncStatus.textContent = "Anki: no viewed vocabulary to sync.";
+    confirmEndButton.textContent = "End Session";
+    return;
+  }
+  const counts = reviewStateCounts(plan.ready);
+  const incomplete = plan.incomplete.length > 0
+    ? ` ${plan.incomplete.length} token(s) are missing a reading or translation; sync is blocked.`
+    : "";
+  ankiSyncStatus.textContent = `Anki: ${plan.ready.length} token(s) ready — ${counts.again} Again, ${counts.good} Good, ${counts.easy} Easy.${incomplete}`;
+  confirmEndButton.textContent = plan.incomplete.length === 0
+    ? `End Session & Sync ${plan.ready.length} Token${plan.ready.length === 1 ? "" : "s"}`
+    : "Cannot End: Incomplete Tokens";
+  confirmEndButton.disabled = plan.incomplete.length > 0;
+}
+
+function ankiSyncPlan() {
+  const candidates = sessionSummaryRows()
+    .map(ankiCardFromRow);
+  return {
+    candidates,
+    ready: candidates.filter(ankiCardIsReady),
+    incomplete: candidates.filter((card) => !ankiCardIsReady(card)),
+  };
+}
+
+function ankiCardFromRow(row) {
+  const vocabulary = row.vocabulary ?? {};
+  const canonical = row.canonical;
+  return {
+    canonical,
+    expression: canonical.split("::", 1)[0],
+    surface: row.surface,
+    hiragana: vocabulary.hiragana || row.hiragana,
+    romaji: vocabulary.romaji || row.romaji,
+    translation: vocabulary.translation || row.translation,
+    sentence: row.sentence,
+    article_title: state.article?.title || "",
+    source_url: state.article?.canonicalurl || "",
+    vocabulary_id: vocabulary.dictionary_id || `UniDic:${canonical}`,
+    dictionary_source: vocabulary.source || "UniDic",
+    review_state: row.reviewState,
+  };
+}
+
+function ankiCardIsReady(card) {
+  return Boolean(
+    card.canonical
+      && card.expression
+      && card.hiragana
+      && card.romaji
+      && card.translation,
+  );
+}
+
+function reviewStateCounts(cards) {
+  const counts = { again: 0, good: 0, easy: 0 };
+  for (const card of cards) counts[card.review_state] += 1;
+  return counts;
+}
+
+async function refreshAnkiStatus() {
+  const plan = ankiSyncPlan();
+  if (plan.candidates.length === 0 || plan.incomplete.length > 0) return;
+  const summary = ankiSyncStatus.textContent;
+  ankiSyncStatus.textContent = `${summary} Checking AnkiConnect…`;
+  const response = await fetch("/api/anki/status");
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload.connected) {
+    ankiSyncStatus.textContent = `${summary} ${payload.error || "AnkiConnect is unavailable."}`;
+    return;
+  }
+  ankiSyncStatus.textContent = `${summary} Connected to ${payload.deck}.`;
+}
+
+async function syncAnkiSession() {
+  const plan = ankiSyncPlan();
+  if (plan.candidates.length === 0) {
+    return { tokens: 0, created: 0, updated: 0, scheduled: {} };
+  }
+  if (plan.incomplete.length > 0) {
+    throw new Error(
+      `${plan.incomplete.length} token(s) are missing a reading or translation; the session was not ended.`,
+    );
+  }
+  const response = await fetch("/api/anki-sync", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: state.sessionId, cards: plan.ready }),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error || "Could not sync the session to Anki.");
+  }
+  return response.json();
+}
+
+function ankiSyncResultLabel(result) {
+  const scheduled = result.scheduled ?? {};
+  return `Anki synced ${result.tokens ?? 0} token(s): ${result.created ?? 0} added, ${result.updated ?? 0} updated; ${scheduled.again ?? 0} Again, ${scheduled.good ?? 0} Good, ${scheduled.easy ?? 0} Easy.`;
+}
+
 function encounteredPlaces() {
   const places = new Map();
   for (const entry of state.tokenCatalog.values()) {
-    const counts = state.sessionCounts.get(entry.canonical);
-    if (!counts || counts.encounters <= 0) continue;
+    if ((state.viewedCounts.get(entry.canonical) ?? 0) <= 0) continue;
     for (const place of entry.places ?? []) {
       const key = place.id || place.surface || place.label;
       if (!key) continue;

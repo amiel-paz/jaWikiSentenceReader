@@ -7,6 +7,7 @@ __pycache__/
 data/dictionary.sqlite
 data/analysis_cache.sqlite
 data/article_cache.sqlite
+data/anki_sync.sqlite
 data/tmp_place_probe.sqlite
 data/wikidata_place_cache.sqlite
 data/wikimedia_reading_cache.sqlite
@@ -15,3 +16,8 @@ data/dictionary_sources/
 # Local runtime/cache files.
 instance/
 .DS_Store
+
+# Lawfully accessed articles kept for private, local reading only.
+# Keep the directory scaffold, but never commit its contents.
+data/private/*
+!data/private/.gitkeep
