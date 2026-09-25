@@ -13,6 +13,7 @@ Local prototype for reading Japanese Wikipedia articles one sentence at a time.
 - Fills missing kanji readings from cached Japanese Wikipedia parenthetical readings
   when the source can be matched conservatively.
 - Tracks session recognition choices in browser memory.
+- Previews the exact Anki front/reveal payload from each token hover.
 - Syncs every token from viewed sentences into a dedicated, review-only Anki deck.
 
 Phrase hints are explanatory only. They are not included in session/global recognition accounting.

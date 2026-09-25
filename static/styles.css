@@ -293,6 +293,8 @@ h1 {
   background: var(--paper);
   border: 1px solid var(--line);
   box-shadow: 0 18px 42px rgb(0 0 0 / 28%);
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
   padding: 14px;
 }
 
@@ -344,6 +346,78 @@ h1 {
 .choice.always {
   border-color: var(--black);
   color: var(--black);
+}
+
+.preview-card-button {
+  width: 100%;
+  margin-top: 10px;
+  padding: 9px 10px;
+  font-weight: 700;
+}
+
+.card-preview {
+  border: 1px solid var(--line);
+  margin-top: 10px;
+  padding: 12px;
+  text-align: center;
+}
+
+.card-preview-label {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.card-preview-expression {
+  font-family: serif;
+  font-size: 28px;
+  margin-top: 8px;
+}
+
+.card-preview-divider {
+  border-top: 1px solid var(--line);
+  margin: 12px 0;
+}
+
+.card-preview-reading {
+  font-size: 18px;
+  font-weight: 800;
+  margin-top: 8px;
+}
+
+.card-preview-romaji,
+.card-preview-detail,
+.card-preview-source,
+.card-preview-answer {
+  color: var(--muted);
+  display: block;
+  font-size: 12px;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+
+.card-preview-meaning {
+  font-size: 15px;
+  margin-top: 10px;
+}
+
+.card-preview-sentence {
+  border-top: 1px solid var(--line);
+  font-family: serif;
+  font-size: 14px;
+  line-height: 1.55;
+  margin-top: 12px;
+  padding-top: 10px;
+  text-align: left;
+  white-space: pre-wrap;
+}
+
+.card-preview-answer {
+  font-weight: 800;
+  margin-top: 10px;
 }
 
 .confirm {

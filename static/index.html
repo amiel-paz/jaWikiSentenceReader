@@ -81,6 +81,29 @@
           always recognized
         </button>
       </div>
+      <button
+        id="preview-card"
+        class="preview-card-button"
+        type="button"
+        aria-expanded="false"
+        aria-controls="card-preview"
+      >
+        Preview Anki card
+      </button>
+      <section id="card-preview" class="card-preview" aria-label="Anki card preview" hidden>
+        <div class="card-preview-label">Front</div>
+        <div id="card-preview-expression" class="card-preview-expression"></div>
+        <div class="card-preview-divider"></div>
+        <div class="card-preview-label">Reveal</div>
+        <div id="card-preview-reading" class="card-preview-reading"></div>
+        <div id="card-preview-romaji" class="card-preview-romaji"></div>
+        <div id="card-preview-meaning" class="card-preview-meaning"></div>
+        <div id="card-preview-surface" class="card-preview-detail"></div>
+        <div id="card-preview-sentence" class="card-preview-sentence"></div>
+        <a id="card-preview-source" class="card-preview-source" target="_blank" rel="noreferrer"></a>
+        <div id="card-preview-dictionary" class="card-preview-detail"></div>
+        <div id="card-preview-answer" class="card-preview-answer"></div>
+      </section>
     </div>
 
     <div id="confirm" class="confirm" hidden>

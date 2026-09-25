@@ -36,6 +36,17 @@ const popoverTranslation = document.querySelector("#popover-translation");
 const popoverPlaces = document.querySelector("#popover-places");
 const popoverPhrases = document.querySelector("#popover-phrases");
 const popoverInherited = document.querySelector("#popover-inherited");
+const previewCardButton = document.querySelector("#preview-card");
+const cardPreview = document.querySelector("#card-preview");
+const cardPreviewExpression = document.querySelector("#card-preview-expression");
+const cardPreviewReading = document.querySelector("#card-preview-reading");
+const cardPreviewRomaji = document.querySelector("#card-preview-romaji");
+const cardPreviewMeaning = document.querySelector("#card-preview-meaning");
+const cardPreviewSurface = document.querySelector("#card-preview-surface");
+const cardPreviewSentence = document.querySelector("#card-preview-sentence");
+const cardPreviewSource = document.querySelector("#card-preview-source");
+const cardPreviewDictionary = document.querySelector("#card-preview-dictionary");
+const cardPreviewAnswer = document.querySelector("#card-preview-answer");
 const confirmOverlay = document.querySelector("#confirm");
 const cancelEndButton = document.querySelector("#cancel-end");
 const confirmEndButton = document.querySelector("#confirm-end");
@@ -96,6 +107,10 @@ confirmEndButton.addEventListener("click", async () => {
 });
 
 popover.addEventListener("click", (event) => {
+  if (event.target.closest("#preview-card")) {
+    toggleCardPreview();
+    return;
+  }
   const button = event.target.closest("[data-choice]");
   if (!button || !state.activeToken) return;
   chooseToken(state.activeToken, button.dataset.choice);
@@ -388,6 +403,7 @@ function sentenceMark(sentenceId, canonical) {
 
 function showPopover(anchor, token, event) {
   cancelPopoverClose();
+  resetCardPreview();
   activeAnchor = anchor;
   state.activeToken = {
     ...token,
@@ -423,9 +439,64 @@ function cancelPopoverClose() {
 
 function hidePopover() {
   cancelPopoverClose();
+  resetCardPreview();
   popover.hidden = true;
   activeAnchor = null;
   state.activeToken = null;
+}
+
+function resetCardPreview() {
+  cardPreview.hidden = true;
+  previewCardButton.setAttribute("aria-expanded", "false");
+  previewCardButton.textContent = "Preview Anki card";
+}
+
+function toggleCardPreview() {
+  if (!state.activeToken) return;
+  const willShow = cardPreview.hidden;
+  if (willShow) renderCardPreview(ankiCardForActiveToken());
+  cardPreview.hidden = !willShow;
+  previewCardButton.setAttribute("aria-expanded", String(willShow));
+  previewCardButton.textContent = willShow ? "Hide Anki card preview" : "Preview Anki card";
+  if (activeAnchor) positionPopover(activeAnchor);
+}
+
+function ankiCardForActiveToken() {
+  const entry = tokenCatalogEntry(state.activeToken);
+  const counts = state.sessionCounts.get(entry.canonical) ?? {
+    encounters: 0,
+    recognitions: 0,
+  };
+  return ankiCardFromRow({
+    ...entry,
+    reviewState: reviewStateForToken(entry.canonical, counts),
+  });
+}
+
+function renderCardPreview(card) {
+  cardPreviewExpression.textContent = card.expression;
+  cardPreviewReading.textContent = card.hiragana || "Reading unavailable";
+  cardPreviewRomaji.textContent = card.romaji || "Romaji unavailable";
+  cardPreviewMeaning.textContent = card.translation || "Translation unavailable";
+  cardPreviewSurface.textContent = card.surface && card.surface !== card.expression
+    ? `Seen as: ${card.surface}`
+    : "";
+  cardPreviewSentence.textContent = card.sentence || "";
+  cardPreviewSource.textContent = card.article_title
+    ? `Source: ${card.article_title}`
+    : "";
+  cardPreviewSource.href = card.source_url || "";
+  cardPreviewSource.hidden = !(card.article_title && card.source_url);
+  cardPreviewDictionary.textContent = [card.dictionary_source, card.vocabulary_id]
+    .filter(Boolean)
+    .join(" · ");
+  cardPreviewAnswer.textContent = `Current session answer: ${ankiAnswerLabel(card.review_state)}`;
+}
+
+function ankiAnswerLabel(reviewState) {
+  if (reviewState === "easy") return "Easy";
+  if (reviewState === "good") return "Good";
+  return "Again";
 }
 
 function positionPopover(anchor, event) {
