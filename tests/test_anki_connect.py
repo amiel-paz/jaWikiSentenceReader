@@ -9,8 +9,17 @@ from wiki_reader.anki_connect import (
 )
 
 
-def sample_card(canonical="離れる::動詞", review_state="again"):
-    return {
+def sample_card(canonical="離れる::動詞", review_state="again", **values):
+    scores = {
+        "again": {"recognized_count": 0, "unrecognized_count": 1},
+        "good": {
+            "recognized_count": 3,
+            "unrecognized_count": 1,
+            "priority_days": 2,
+        },
+        "easy": {"recognized_count": 1, "unrecognized_count": 0},
+    }[review_state]
+    card = {
         "canonical": canonical,
         "expression": canonical.split("::", 1)[0],
         "surface": "離れ",
@@ -23,7 +32,10 @@ def sample_card(canonical="離れる::動詞", review_state="again"):
         "vocabulary_id": "JMdict:123",
         "dictionary_source": "JMdict",
         "review_state": review_state,
+        **scores,
     }
+    card.update(values)
+    return card
 
 
 class FakeClient:
@@ -93,7 +105,10 @@ def test_existing_review_notes_are_updated_and_use_good_and_easy():
             "modelFieldNames": [MODEL_FIELDS],
             "findNotes": [[101, 102]],
             "notesInfo": [note_info, note_info],
-            "multi": [[{"result": None, "error": None}, {"result": None, "error": None}]],
+            "multi": [
+                [{"result": None, "error": None}, {"result": None, "error": None}],
+                [True],
+            ],
             "changeDeck": [None],
             "cardsInfo": [[{"cardId": 201, "type": 2}, {"cardId": 202, "type": 2}]],
             "findCards": [[]],
@@ -111,6 +126,7 @@ def test_existing_review_notes_are_updated_and_use_good_and_easy():
     assert result["updated"] == 2
     assert result["promoted_to_review"] == 0
     assert result["scheduled"] == {"good": 1, "easy": 1}
+    assert result["priority_due_days"] == {"2": 1}
     assert not any(action == "setDueDate" for action, _ in client.calls)
     assert (
         "answerCards",
@@ -121,6 +137,17 @@ def test_existing_review_notes_are_updated_and_use_good_and_easy():
             ]
         },
     ) in client.calls
+    assert (
+        "multi",
+        {
+            "actions": [
+                {
+                    "action": "setDueDate",
+                    "params": {"cards": [201], "days": "2"},
+                }
+            ]
+        },
+    ) in client.calls
 
 
 def test_sync_rejects_missing_review_state():
@@ -128,6 +155,18 @@ def test_sync_rejects_missing_review_state():
     del card["review_state"]
 
     with pytest.raises(ValueError, match="review_state"):
+        sync_anki_cards([card], client=FakeClient({}))
+
+
+def test_good_requires_recognition_majority_and_matching_margin():
+    card = sample_card(
+        review_state="good",
+        recognized_count=2,
+        unrecognized_count=2,
+        priority_days=1,
+    )
+
+    with pytest.raises(ValueError, match="recognized_count > unrecognized_count"):
         sync_anki_cards([card], client=FakeClient({}))
 
 

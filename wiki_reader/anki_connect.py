@@ -3,7 +3,7 @@ from __future__ import annotations
 import html
 import json
 import os
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from typing import Any, Protocol
 from urllib.error import URLError
@@ -222,11 +222,34 @@ def sync_anki_cards(
             + ", ".join(str(card_id) for card_id in failed)
         )
 
+    priority_cards: dict[int, list[int]] = defaultdict(list)
+    for token_id, note_id in target_note_ids.items():
+        card = by_token[token_id]
+        if card["review_state"] != "good":
+            continue
+        priority_days = int(card["priority_days"])
+        priority_cards[priority_days].extend(cards_by_note.get(note_id, []))
+    if priority_cards:
+        priority_results = connector.invoke(
+            "multi",
+            actions=[
+                {
+                    "action": "setDueDate",
+                    "params": {"cards": cards, "days": str(days)},
+                }
+                for days, cards in sorted(priority_cards.items())
+            ],
+        )
+        _check_multi_results(priority_results, "apply recognition priority")
+
     return {
         "tokens": len(by_token),
         "created": len(created_ids),
         "updated": len(by_token) - len(created_ids),
         "scheduled": dict(scheduled),
+        "priority_due_days": {
+            str(days): len(cards) for days, cards in sorted(priority_cards.items())
+        },
         "promoted_to_review": len(promote_to_review),
         "deck": deck,
         "model": MODEL_NAME,
@@ -238,7 +261,30 @@ def _validated_sync_card(card: dict[str, Any]) -> dict[str, str]:
     review_state = str(card.get("review_state", "")).strip().lower()
     if review_state not in REVIEW_EASE:
         raise ValueError("Each Anki token needs review_state: again, good, or easy.")
+    try:
+        recognized = int(card.get("recognized_count", 0))
+        unrecognized = int(card.get("unrecognized_count", 0))
+    except (TypeError, ValueError) as error:
+        raise ValueError("Recognition counts must be non-negative integers.") from error
+    if recognized < 0 or unrecognized < 0:
+        raise ValueError("Recognition counts must be non-negative integers.")
+    normalized["recognized_count"] = str(recognized)
+    normalized["unrecognized_count"] = str(unrecognized)
     normalized["review_state"] = review_state
+    if review_state == "good":
+        expected_priority = recognized - unrecognized
+        try:
+            priority_days = int(card.get("priority_days", 0))
+        except (TypeError, ValueError) as error:
+            raise ValueError("Good cards require a positive integer priority_days.") from error
+        if expected_priority <= 0 or priority_days != expected_priority:
+            raise ValueError(
+                "Good cards require recognized_count > unrecognized_count and "
+                "priority_days equal to their difference."
+            )
+        normalized["priority_days"] = str(priority_days)
+    else:
+        normalized["priority_days"] = ""
     return normalized
 
 
@@ -320,7 +366,7 @@ def _note_fields(card: dict[str, str]) -> dict[str, str]:
         "Article": html.escape(card.get("article_title", "")),
         "SourceUrl": html.escape(card.get("source_url", ""), quote=True),
         "Dictionary": html.escape(dictionary),
-        "SessionStatus": card["review_state"],
+        "SessionStatus": _session_status(card),
     }
 
 
@@ -332,6 +378,17 @@ def _new_note(fields: dict[str, str], deck: str) -> dict[str, Any]:
         "options": {"allowDuplicate": False, "duplicateScope": "deck"},
         "tags": ["ja_sentence_reader"],
     }
+
+
+def _session_status(card: dict[str, str]) -> str:
+    score = (
+        f"recognized={card['recognized_count']}; "
+        f"unrecognized={card['unrecognized_count']}"
+    )
+    priority = (
+        f"; priority_days={card['priority_days']}" if card["priority_days"] else ""
+    )
+    return f"{card['review_state']}; {score}{priority}"
 
 
 def _check_multi_results(results: Any, operation: str) -> None:

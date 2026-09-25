@@ -92,11 +92,19 @@ http://127.0.0.1:5001/?article=private%3A<key>
 Every distinct token from every viewed sentence is included at End Session.
 The final state has this deterministic Anki meaning:
 
-| Reader state | Anki answer | Effect |
+Unmarked occurrences count as unrecognized. Repeated occurrences of the same
+canonical token are combined before scheduling.
+
+| Reader result | Anki answer | Effect |
 | --- | --- | --- |
-| unmarked or unrecognized | Again (`1`) | shortest return; emphasizes misses |
-| recognized in every viewed occurrence | Good (`3`) | normal review delay |
+| unrecognized is greater than or equal to recognized | Again (`1`) | enters review/relearning at highest priority |
+| recognized is greater than unrecognized | Good (`3`) | due in `recognized - unrecognized` days |
 | always recognized | Easy (`4`) | longest standard answer delay |
+
+For a recognized majority, the positive difference is the priority margin. A
+1-vote margin is due in 1 day; a 5-vote margin is due in 5 days. This keeps
+borderline vocabulary ahead of consistently recognized vocabulary. A tie is
+handled conservatively as Again.
 
 If a token is absent from the deck, its note is created. If its card is New or
 in a learning queue, it is first promoted to Review. The answer is then applied

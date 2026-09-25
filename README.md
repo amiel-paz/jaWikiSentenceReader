@@ -62,8 +62,10 @@ ending a session. Every token from every viewed sentence is created or updated
 in `Japanese::Sentence Reader`. New and learning cards are promoted to review
 before the session answer is applied:
 
-- unmarked or unrecognized → Again (`1`);
-- recognized throughout the viewed session → Good (`3`);
+- unmarked occurrences count as unrecognized;
+- unrecognized greater than or equal to recognized → Again (`1`);
+- recognized greater than unrecognized → Good (`3`), due in a number of days
+  equal to the recognition margin;
 - always recognized → Easy (`4`).
 
 Again may put a card into Anki's relearning queue, but no card remains New after

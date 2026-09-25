@@ -467,9 +467,20 @@ function ankiCardForActiveToken() {
     encounters: 0,
     recognitions: 0,
   };
+  const encounters = state.viewedCounts.get(entry.canonical) ?? 0;
+  const recognized = counts.recognitions;
+  const unrecognized = Math.max(0, encounters - recognized);
+  const reviewState = reviewStateForToken(
+    entry.canonical,
+    recognized,
+    unrecognized,
+  );
   return ankiCardFromRow({
     ...entry,
-    reviewState: reviewStateForToken(entry.canonical, counts),
+    recognitions: recognized,
+    unrecognized,
+    reviewState,
+    priorityDays: reviewPriorityDays(reviewState, recognized, unrecognized),
   });
 }
 
@@ -490,7 +501,11 @@ function renderCardPreview(card) {
   cardPreviewDictionary.textContent = [card.dictionary_source, card.vocabulary_id]
     .filter(Boolean)
     .join(" · ");
-  cardPreviewAnswer.textContent = `Current session answer: ${ankiAnswerLabel(card.review_state)}`;
+  const score = `${card.recognized_count} recognized / ${card.unrecognized_count} unrecognized`;
+  const priority = card.priority_days
+    ? ` · due in ${card.priority_days} day${card.priority_days === 1 ? "" : "s"}`
+    : "";
+  cardPreviewAnswer.textContent = `Current session answer: ${ankiAnswerLabel(card.review_state)} · ${score}${priority}`;
 }
 
 function ankiAnswerLabel(reviewState) {
@@ -714,24 +729,35 @@ function sessionSummaryRows() {
       encounters: 0,
       recognitions: 0,
     };
+    const encounters = state.viewedCounts.get(entry.canonical) ?? 0;
+    const recognized = counts.recognitions;
+    const unrecognized = Math.max(0, encounters - recognized);
+    const reviewState = reviewStateForToken(
+      entry.canonical,
+      recognized,
+      unrecognized,
+    );
     return {
       ...entry,
-      encounters: state.viewedCounts.get(entry.canonical) ?? 0,
-      recognitions: counts.recognitions,
+      encounters,
+      recognitions: recognized,
+      unrecognized,
       decisions: counts.encounters,
-      reviewState: reviewStateForToken(entry.canonical, counts),
+      reviewState,
+      priorityDays: reviewPriorityDays(reviewState, recognized, unrecognized),
     };
   }).filter((row) => row.encounters > 0)
     .sort(compareSessionSummaryRows);
 }
 
-function reviewStateForToken(canonical, counts) {
+function reviewStateForToken(canonical, recognized, unrecognized) {
   if (state.alwaysRecognized.has(canonical)) return "easy";
-  const viewed = state.viewedCounts.get(canonical) ?? 0;
-  if (viewed > 0 && counts.encounters === viewed && counts.recognitions === viewed) {
-    return "good";
-  }
-  return "again";
+  return recognized > unrecognized ? "good" : "again";
+}
+
+function reviewPriorityDays(reviewState, recognized, unrecognized) {
+  if (reviewState !== "good") return null;
+  return Math.max(1, recognized - unrecognized);
 }
 
 function compareSessionSummaryRows(left, right) {
@@ -777,7 +803,13 @@ function summaryMeta(row) {
   const answer = row.reviewState === "easy"
     ? "Anki: Easy"
     : row.reviewState === "good" ? "Anki: Good" : "Anki: Again";
-  return [row.canonical, reading, row.translation, answer].filter(Boolean).join(" | ");
+  const score = `score: ${row.recognitions} recognized / ${row.unrecognized} unrecognized`;
+  const priority = row.priorityDays
+    ? `due priority: ${row.priorityDays} day${row.priorityDays === 1 ? "" : "s"}`
+    : "";
+  return [row.canonical, reading, row.translation, score, answer, priority]
+    .filter(Boolean)
+    .join(" | ");
 }
 
 function recognitionRatio(row) {
@@ -843,6 +875,9 @@ function ankiCardFromRow(row) {
     vocabulary_id: vocabulary.dictionary_id || `UniDic:${canonical}`,
     dictionary_source: vocabulary.source || "UniDic",
     review_state: row.reviewState,
+    recognized_count: row.recognitions,
+    unrecognized_count: row.unrecognized,
+    priority_days: row.priorityDays,
   };
 }
 
