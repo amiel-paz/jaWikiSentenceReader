@@ -8,12 +8,12 @@ Local prototype for reading Japanese Wikipedia articles one sentence at a time.
 - Fetches article text through the MediaWiki API.
 - Shows one sentence at a time.
 - Tokenizes Japanese terms into canonical tokens.
-- Adds readings, romaji, optional JMdict/JMnedict glosses, and hover-only phrase hints.
+- Adds readings, romaji, optional JMdict/JMnedict glosses, and contextual phrase hints.
 - Adds cached Wikimedia/Wikidata place annotations for likely place-name spans.
 - Fills missing kanji readings from cached Japanese Wikipedia parenthetical readings
   when the source can be matched conservatively.
 - Tracks session recognition choices in browser memory.
-- Previews the exact Anki front/reveal payload from each token hover.
+- Previews the exact Anki front/reveal payload from each click-open token panel.
 - Syncs every token from viewed sentences into a dedicated, review-only Anki deck.
 
 Phrase hints are explanatory only. They are not included in session/global recognition accounting.
@@ -29,6 +29,26 @@ Open:
 
 ```text
 http://127.0.0.1:5001
+```
+
+### Persistent macOS Service
+
+To keep the reader available after terminal and Codex sessions end, install its
+per-user launch agent:
+
+```bash
+./scripts/install_macos_service.sh
+```
+
+The service starts at login and restarts automatically if it exits. It remains
+local to the Mac at `127.0.0.1:5001`. Logs are written to
+`~/Library/Logs/ja-wiki-sentence-reader.log` and
+`~/Library/Logs/ja-wiki-sentence-reader.error.log`.
+
+To stop the service and remove the launch agent:
+
+```bash
+./scripts/uninstall_macos_service.sh
 ```
 
 ## Private Local Articles
@@ -102,7 +122,7 @@ Licensing and attribution should follow:
   card history and schedule.
 - Always-recognized is a per-session choice and maps to Anki Easy at sync.
 - Direct review scheduling requires Anki and AnkiConnect to be running locally.
-- Phrase matching is experimental and hover-only.
+- Phrase matching is experimental and shown in the click-open token panel.
 - Place annotations are generated from Japanese Wikipedia page hits with Wikidata IDs
   and are cached locally in `data/wikidata_place_cache.sqlite`.
 - Wikimedia reading lookups are cached locally in
