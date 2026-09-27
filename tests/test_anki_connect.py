@@ -1,6 +1,7 @@
 import pytest
 
 from wiki_reader.anki_connect import (
+    MODEL_EXPRESSION_SIZE,
     MODEL_FIELDS,
     MODEL_NAME,
     AnkiConnectError,
@@ -82,6 +83,13 @@ def test_new_note_is_promoted_out_of_new_queue_then_answered_again():
     assert result["scheduled"] == {"again": 1}
     assert ("setDueDate", {"cards": [201], "days": "0"}) in client.calls
     assert ("answerCards", {"answers": [{"cardId": 201, "ease": 1}]}) in client.calls
+    create_model = next(params for action, params in client.calls if action == "createModel")
+    assert create_model["modelName"] == MODEL_NAME
+    assert create_model["inOrderFields"] == MODEL_FIELDS
+    assert f"font-size: {MODEL_EXPRESSION_SIZE};" in create_model["css"]
+    assert create_model["cardTemplates"][0]["Front"] == (
+        '<div class="expression">{{Expression}}</div>'
+    )
 
 
 def test_existing_review_notes_are_updated_and_use_good_and_easy():

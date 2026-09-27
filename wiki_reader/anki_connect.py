@@ -15,6 +15,7 @@ from .anki_cards import DEFAULT_DECK, MAX_CARDS_PER_EXPORT, validated_card
 ANKI_CONNECT_URL = "http://127.0.0.1:8765"
 ANKI_CONNECT_VERSION = 6
 MODEL_NAME = "Japanese Sentence Reader"
+MODEL_EXPRESSION_SIZE = "2rem"
 MODEL_FIELDS = [
     "TokenId",
     "Expression",
@@ -406,10 +407,10 @@ def _query_escape(value: str) -> str:
 def _model_css() -> str:
     return """
 .card { font-family: -apple-system, BlinkMacSystemFont, sans-serif; text-align: center; }
-.expression { font-family: serif; font-size: 2rem; }
+.expression { font-family: serif; font-size: __EXPRESSION_SIZE__; }
 .reading { font-size: 1.35rem; font-weight: 700; }
 .romaji, .surface, .source, .dictionary { color: #666; margin-top: .35rem; }
 .meaning { font-size: 1.1rem; margin-top: 1rem; }
 .sentence { border-top: 1px solid #aaa; margin-top: 1rem; padding-top: .8rem; }
 .source, .dictionary { font-size: .8rem; }
-""".strip()
+""".replace("__EXPRESSION_SIZE__", MODEL_EXPRESSION_SIZE).strip()

@@ -9,6 +9,7 @@
   --red: #c73535;
   --black: #111111;
   --hover: #eeeeee;
+  --native-anki-expression-size: 2rem;
 }
 
 body.dark {
@@ -215,7 +216,7 @@ h1 {
   min-height: 220px;
   font-family:
     "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif;
-  font-size: 31px;
+  font-size: var(--native-anki-expression-size);
   line-height: 2.05;
   white-space: pre-wrap;
 }
@@ -380,7 +381,7 @@ h1 {
 
 .card-preview-expression {
   font-family: serif;
-  font-size: 28px;
+  font-size: var(--native-anki-expression-size);
   margin-top: 8px;
 }
 
@@ -545,7 +546,7 @@ h1 {
   }
 
   .sentence {
-    font-size: 24px;
+    font-size: var(--native-anki-expression-size);
     min-height: 260px;
   }
 
