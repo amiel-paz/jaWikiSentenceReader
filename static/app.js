@@ -820,14 +820,15 @@ function ankiSyncPlan() {
 function ankiCardFromRow(row) {
   const vocabulary = row.vocabulary ?? {};
   const canonical = row.canonical;
+  const context = failedContextFields(canonical);
   return {
     canonical,
-    expression: canonical.split("::", 1)[0],
-    surface: row.surface,
+    expression: displayExpression(row),
+    surface: context.surface,
     hiragana: vocabulary.hiragana || row.hiragana,
     romaji: vocabulary.romaji || row.romaji,
     translation: vocabulary.translation || row.translation,
-    sentence: row.sentence,
+    sentence: context.sentence,
     article_title: state.article?.title || "",
     source_url: state.article?.canonicalurl || "",
     vocabulary_id: vocabulary.dictionary_id || `UniDic:${canonical}`,
@@ -837,6 +838,76 @@ function ankiCardFromRow(row) {
     unrecognized_count: row.unrecognized,
     priority_days: row.priorityDays,
   };
+}
+
+function failedContextFields(canonical) {
+  const pairs = [];
+  const seen = new Set();
+  for (const occurrence of tokenOccurrences(canonical)) {
+    const choice = state.sentenceMarks.get(markKey(occurrence.sentenceId, canonical));
+    if (choice !== "unrecognized") continue;
+    const surface = occurrence.surface.trim();
+    const sentence = occurrence.sentence.trim();
+    const key = `${surface}\u0000${sentence}`;
+    if ((!surface && !sentence) || seen.has(key)) continue;
+    seen.add(key);
+    pairs.push({ surface, sentence });
+  }
+  return {
+    surface: pairs.map((item) => item.surface).join("\n"),
+    sentence: pairs.map((item) => item.sentence).join("\n"),
+  };
+}
+
+function displayExpression(row) {
+  const vocabulary = row.vocabulary ?? {};
+  const canonical = row.canonical.split("::", 1)[0];
+  const mapped = String(vocabulary.headword || canonical).trim() || canonical;
+  if (vocabulary.source === "Local override") return mapped;
+
+  const occurrences = tokenOccurrences(row.canonical).reverse();
+  const exact = occurrences.find((item) => (
+    item.surface === mapped || item.surface === canonical
+  ));
+  if (exact) return exact.surface;
+
+  const reading = normalizedJapaneseReading(vocabulary.hiragana || row.hiragana);
+  const kana = occurrences.find((item) => (
+    /^[ぁ-ゖァ-ヺー]+$/.test(item.surface)
+      && normalizedJapaneseReading(item.surface) === reading
+  ));
+  return kana?.surface || mapped;
+}
+
+function tokenOccurrences(canonical) {
+  const occurrences = [];
+  for (const sentence of state.article?.sentences ?? []) {
+    if (!state.viewedSentenceIds.has(sentence.id)) continue;
+    const sentenceCanonicals = new Set();
+    for (const token of sentence.tokens) {
+      const entries = affectedTokenEntries({
+        ...token,
+        sentenceId: sentence.id,
+        sentenceText: sentence.display_text,
+      });
+      for (const entry of entries) {
+        if (entry.canonical !== canonical || sentenceCanonicals.has(canonical)) continue;
+        sentenceCanonicals.add(canonical);
+        occurrences.push({
+          sentenceId: sentence.id,
+          surface: String(entry.surface || ""),
+          sentence: String(sentence.display_text || ""),
+        });
+      }
+    }
+  }
+  return occurrences;
+}
+
+function normalizedJapaneseReading(value) {
+  return String(value).replace(/[ァ-ヶ]/g, (character) => (
+    String.fromCodePoint(character.codePointAt(0) - 0x60)
+  )).replace(/\s+/g, "");
 }
 
 function ankiCardIsReady(card) {

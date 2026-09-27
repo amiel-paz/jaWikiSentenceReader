@@ -3,9 +3,10 @@ from __future__ import annotations
 import html
 import json
 import os
+import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Mapping, Protocol
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
@@ -119,6 +120,7 @@ def sync_anki_cards(
     note_ids = connector.invoke("findNotes", query=f'note:"{_query_escape(MODEL_NAME)}"')
     existing_info = connector.invoke("notesInfo", notes=note_ids) if note_ids else []
     existing = _notes_by_token(existing_info)
+    existing_fields = _note_fields_by_id(existing_info)
 
     created_ids: list[int] = []
     target_note_ids: dict[str, int] = {}
@@ -133,6 +135,13 @@ def sync_anki_cards(
             missing_notes.append(_new_note(fields, deck))
             continue
         target_note_ids[token_id] = note_id
+        previous = existing_fields.get(note_id, {})
+        fields["Surface"], fields["Sentence"] = merge_context_fields(
+            previous.get("Surface", ""),
+            previous.get("Sentence", ""),
+            fields.get("Surface", ""),
+            fields.get("Sentence", ""),
+        )
         update_actions.append(
             {
                 "action": "updateNoteFields",
@@ -350,11 +359,73 @@ def _notes_by_token(notes: Any) -> dict[str, int]:
     return result
 
 
+def _note_fields_by_id(notes: Any) -> dict[int, dict[str, str]]:
+    return {
+        int(note["noteId"]): {
+            str(name): str(field.get("value", ""))
+            for name, field in note.get("fields", {}).items()
+            if isinstance(field, Mapping)
+        }
+        for note in notes or []
+    }
+
+
+def merge_context_fields(
+    existing_surface: str,
+    existing_sentence: str,
+    incoming_surface: str,
+    incoming_sentence: str,
+) -> tuple[str, str]:
+    """Append distinct example pairs without erasing prior failed contexts."""
+    existing = _context_pairs(existing_surface, existing_sentence)
+    incoming = _context_pairs(incoming_surface, incoming_sentence)
+    pairs = list(existing)
+    seen = set(existing)
+    for pair in incoming:
+        if pair == ("", "") or pair in seen:
+            continue
+        seen.add(pair)
+        pairs.append(pair)
+    return (
+        "<br>".join(html.escape(surface) for surface, _ in pairs),
+        "<br>".join(html.escape(sentence) for _, sentence in pairs),
+    )
+
+
+def _context_pairs(surface_value: str, sentence_value: str) -> list[tuple[str, str]]:
+    surfaces = _context_lines(surface_value)
+    sentences = _context_lines(sentence_value)
+    size = max(len(surfaces), len(sentences))
+    return [
+        (
+            surfaces[index] if index < len(surfaces) else "",
+            sentences[index] if index < len(sentences) else "",
+        )
+        for index in range(size)
+    ]
+
+
+def _context_lines(value: str) -> list[str]:
+    if not str(value).strip():
+        return []
+    return [
+        html.unescape(part).strip()
+        for part in re.split(r"(?i)<br\s*/?>|\r?\n", str(value))
+        if html.unescape(part).strip()
+    ]
+
+
 def _note_fields(card: dict[str, str]) -> dict[str, str]:
     dictionary = " · ".join(
         value
         for value in (card.get("dictionary_source", ""), card.get("vocabulary_id", ""))
         if value
+    )
+    surface, sentence = merge_context_fields(
+        "",
+        "",
+        card.get("surface", ""),
+        card.get("sentence", ""),
     )
     return {
         "TokenId": html.escape(card["canonical"]),
@@ -362,8 +433,8 @@ def _note_fields(card: dict[str, str]) -> dict[str, str]:
         "Reading": html.escape(card["hiragana"]),
         "Romaji": html.escape(card["romaji"]),
         "Meaning": html.escape(card["translation"]),
-        "Surface": html.escape(card.get("surface", "")),
-        "Sentence": html.escape(card.get("sentence", "")).replace("\n", "<br>"),
+        "Surface": surface,
+        "Sentence": sentence,
         "Article": html.escape(card.get("article_title", "")),
         "SourceUrl": html.escape(card.get("source_url", ""), quote=True),
         "Dictionary": html.escape(dictionary),

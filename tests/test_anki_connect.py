@@ -6,6 +6,7 @@ from wiki_reader.anki_connect import (
     MODEL_NAME,
     AnkiConnectError,
     anki_status,
+    merge_context_fields,
     sync_anki_cards,
 )
 
@@ -156,6 +157,67 @@ def test_existing_review_notes_are_updated_and_use_good_and_easy():
             ]
         },
     ) in client.calls
+
+
+def test_context_merge_appends_distinct_pairs_without_erasing_prior_failures():
+    surface, sentence = merge_context_fields(
+        "離れ",
+        "前の失敗。",
+        "離れ\n離れ",
+        "前の失敗。\n次の失敗。",
+    )
+
+    assert surface == "離れ<br>離れ"
+    assert sentence == "前の失敗。<br>次の失敗。"
+
+
+def test_sync_appends_new_context_to_existing_note():
+    note_info = {
+        "noteId": 101,
+        "cards": [201],
+        "fields": {
+            "TokenId": {"value": "離れる::動詞"},
+            "Surface": {"value": "離れ"},
+            "Sentence": {"value": "前の失敗。"},
+        },
+    }
+    client = FakeClient(
+        {
+            "version": [6],
+            "createDeck": [1],
+            "modelNames": [[MODEL_NAME]],
+            "modelFieldNames": [MODEL_FIELDS],
+            "findNotes": [[101]],
+            "notesInfo": [[note_info], [note_info]],
+            "multi": [[{"result": None, "error": None}]],
+            "changeDeck": [None],
+            "cardsInfo": [[{"cardId": 201, "type": 2}]],
+            "findCards": [[]],
+            "answerCards": [[True]],
+        }
+    )
+
+    sync_anki_cards(
+        [sample_card(surface="離れて", sentence="次の失敗。")],
+        client=client,
+    )
+
+    update = next(params for action, params in client.calls if action == "multi")
+    fields = update["actions"][0]["params"]["note"]["fields"]
+    assert fields["Surface"] == "離れ<br>離れて"
+    assert fields["Sentence"] == "前の失敗。<br>次の失敗。"
+
+
+def test_sync_does_not_erase_context_when_incoming_card_has_no_example():
+    surface, sentence = merge_context_fields(
+        "離れ",
+        "以前わからなかった文。",
+        "",
+        "",
+    )
+
+    assert surface == "離れ"
+    assert sentence == "以前わからなかった文。"
 
 
 def test_sync_rejects_missing_review_state():

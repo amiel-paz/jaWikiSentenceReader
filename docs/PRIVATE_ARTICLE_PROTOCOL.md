@@ -92,8 +92,8 @@ http://127.0.0.1:5001/?article=private%3A<key>
 Every distinct token from every viewed sentence is included at End Session.
 The final state has this deterministic Anki meaning:
 
-Unmarked occurrences count as unrecognized. Repeated occurrences of the same
-canonical token are combined before scheduling.
+Unmarked occurrences count as unrecognized for scheduling. Repeated occurrences
+of the same canonical token are combined before scheduling.
 
 | Reader result | Anki answer | Effect |
 | --- | --- | --- |
@@ -111,9 +111,19 @@ in a learning queue, it is first promoted to Review. The answer is then applied
 through Anki's scheduler. Consequently the deck contains no New cards after a
 successful sync; Again cards may correctly enter Anki's *relearning* queue.
 
-The note front is the canonical Japanese expression. Reveal shows hiragana,
-romaji, English meaning, observed surface, source sentence, article link, and
-dictionary identity.
+The note keeps the canonical `lemma::POS` token ID for deduplication. If an
+encountered kana spelling exactly matches the complete mapped reading, that
+natural kana spelling is used on the front instead of an uncommon UniDic kanji
+lemma; explicit local vocabulary overrides remain authoritative.
+
+Surface and sentence examples are added only for occurrences explicitly marked
+**unrecognized**. Unmarked occurrences still affect scheduling but do not supply
+examples. Recognized and always-recognized occurrences likewise supply no
+context. Distinct unrecognized examples are kept in article order and appended
+to any examples already stored on the same canonical Anki note without erasing
+or duplicating earlier failures. Reveal otherwise shows hiragana, romaji,
+English meaning, the retained failed examples, article link, and dictionary
+identity.
 
 ## 6. End only after a successful sync
 

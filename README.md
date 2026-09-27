@@ -15,6 +15,11 @@ Local prototype for reading Japanese Wikipedia articles one sentence at a time.
 - Tracks session recognition choices in browser memory.
 - Previews the exact Anki front/reveal payload from each click-open token panel.
 - Syncs every token from viewed sentences into a dedicated, review-only Anki deck.
+- Adds card examples only from explicitly unrecognized occurrences; distinct
+  later failures append to the same canonical note without overwriting earlier
+  examples.
+- Uses an encountered kana spelling on the card front when it exactly matches
+  the mapped reading, while retaining the stable canonical token ID internally.
 
 Phrase hints are explanatory only. They are not included in session/global recognition accounting.
 
