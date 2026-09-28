@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from .phrase_matcher import detect_phrase_matches, overlapping_phrases, tagged_nodes
 from .token_utils import (
@@ -35,6 +35,7 @@ TRACKED_POS = {
     "代名詞",
     "連体詞",
 }
+INFLECTING_PARTS_OF_SPEECH = {"動詞", "形容詞", "助動詞"}
 GRAMMAR_TOKEN_TRANSLATIONS = {
     ("助詞", "ほど"): "to the extent that; so much that; degree/extent",
     ("接続詞", "また"): "also; additionally; moreover; furthermore",
@@ -111,7 +112,7 @@ def analyze_sentence_with_cache(
         place_provider,
         reading_provider,
     )
-    attach_vocabulary_mappings(rows, translation_provider)
+    attach_vocabulary_mappings(rows, translation_provider, sentence=analysis_text)
     return {
         "display_text": sentence,
         "analysis_text": analysis_text,
@@ -124,7 +125,10 @@ def analyze_sentence_with_cache(
 
 
 def attach_vocabulary_mappings(
-    rows: list[dict[str, Any]], translation_provider: TranslationProvider
+    rows: list[dict[str, Any]],
+    translation_provider: TranslationProvider,
+    *,
+    sentence: str = "",
 ) -> None:
     for row in rows:
         row["vocabulary"] = vocabulary_mapping(row, translation_provider)
@@ -133,6 +137,225 @@ def attach_vocabulary_mappings(
                 inherited["vocabulary"] = vocabulary_mapping(
                     inherited, translation_provider
                 )
+    for row in rows:
+        repair_shared_vocabulary_mapping(row, sentence, translation_provider)
+        for inherited in row.get("inherited_tokens", []):
+            if isinstance(inherited, dict):
+                repair_shared_vocabulary_mapping(
+                    inherited, sentence, translation_provider
+                )
+    for row in rows:
+        inherited = row.setdefault("inherited_tokens", [])
+        seen = {
+            str((item.get("vocabulary") or {}).get("token_id") or item.get("canonical") or "")
+            for item in inherited
+            if isinstance(item, dict)
+        }
+        for suffix in dictionary_nominal_suffix_items(row, translation_provider):
+            token_id = str(
+                (suffix.get("vocabulary") or {}).get("token_id")
+                or suffix.get("canonical")
+                or ""
+            )
+            if token_id and token_id not in seen:
+                inherited.append(suffix)
+                seen.add(token_id)
+
+
+def repair_shared_vocabulary_mapping(
+    item: dict[str, Any], sentence: str, translation_provider: TranslationProvider
+) -> None:
+    """Apply context-safe dictionary repairs shared by every reader client."""
+    if repair_inflected_dictionary_fallback(item, translation_provider):
+        return
+    repair_te_miru_fixed_expression(item, sentence, translation_provider)
+
+
+def repair_inflected_dictionary_fallback(
+    item: dict[str, Any], translation_provider: TranslationProvider
+) -> bool:
+    """Recover the validated UniDic lemma for a bad inflected mapping."""
+    vocabulary = item.get("vocabulary") or {}
+    is_incomplete_fallback = (
+        str(vocabulary.get("mapping_status", "")) == "token_fallback"
+        and not str(vocabulary.get("translation", "")).strip()
+    )
+    is_improper_name_mapping = (
+        str(vocabulary.get("source", "")) == "JMnedict"
+        and str(item.get("pos2", "")) != "固有名詞"
+    )
+    if str(item.get("pos1", "")) not in INFLECTING_PARTS_OF_SPEECH or not (
+        is_incomplete_fallback or is_improper_name_mapping
+    ):
+        return False
+
+    surface = str(item.get("surface", "")).strip()
+    if not surface:
+        return False
+    nodes = [node for node in get_tagger()(surface) if token_node_is_lexical(node)]
+    if len(nodes) != 1 or str(nodes[0].surface) != surface:
+        return False
+    node = nodes[0]
+    lemma = str(getattr(node.feature, "lemma", "") or "").strip()
+    pos1 = str(getattr(node.feature, "pos1", "") or item.get("pos1", "")).strip()
+    current_lemma = str(item.get("canonical", "")).split("::", 1)[0]
+    if not lemma or not pos1 or lemma == current_lemma:
+        return False
+
+    lemma_reading = katakana_to_hiragana(
+        str(getattr(node.feature, "lForm", "") or "")
+    )
+    candidate = {
+        **item,
+        "canonical": f"{lemma}::{pos1}",
+        "pos1": pos1,
+        "hiragana": lemma_reading or str(item.get("hiragana", "")),
+        "romaji": (
+            kana_to_romaji(lemma_reading)
+            if lemma_reading
+            else str(item.get("romaji", ""))
+        ),
+        "translation": "",
+    }
+    mapped = vocabulary_mapping(candidate, translation_provider)
+    if (
+        str(mapped.get("mapping_status", "")) != "dictionary"
+        or not str(mapped.get("translation", "")).strip()
+    ):
+        return False
+
+    item.update(
+        {
+            "canonical": str(mapped["token_id"]),
+            "hiragana": str(mapped.get("hiragana", candidate["hiragana"])),
+            "romaji": str(mapped.get("romaji", candidate["romaji"])),
+            "translation": str(mapped["translation"]),
+            "vocabulary": mapped,
+        }
+    )
+    return True
+
+
+def repair_te_miru_fixed_expression(
+    item: dict[str, Any], sentence: str, translation_provider: TranslationProvider
+) -> bool:
+    """Map V-てみる to its validated verb, not a homophonous expression."""
+    if (
+        str(item.get("pos1", "")) != "表現"
+        or str(item.get("pos2", "")) != "固定表現"
+    ):
+        return False
+    surface = str(item.get("surface", "")).strip()
+    if not surface or not surface.endswith(("て", "で")):
+        return False
+    try:
+        end = int(item.get("end", -1))
+    except (TypeError, ValueError):
+        return False
+    if end < 0 or end > len(sentence):
+        return False
+
+    following_nodes = [
+        node for node in get_tagger()(sentence[end:]) if token_node_is_lexical(node)
+    ]
+    if not following_nodes:
+        return False
+    auxiliary = following_nodes[0]
+    if not (
+        str(getattr(auxiliary.feature, "lemma", "")) == "見る"
+        and str(getattr(auxiliary.feature, "pos1", "")) == "動詞"
+        and str(getattr(auxiliary.feature, "pos2", "")) == "非自立可能"
+    ):
+        return False
+
+    surface_nodes = [
+        node for node in get_tagger()(surface) if token_node_is_lexical(node)
+    ]
+    if len(surface_nodes) < 2:
+        return False
+    base = surface_nodes[0]
+    lemma = str(getattr(base.feature, "lemma", "") or "").strip()
+    pos1 = str(getattr(base.feature, "pos1", "") or "").strip()
+    if not lemma or pos1 != "動詞":
+        return False
+    lemma_reading = katakana_to_hiragana(
+        str(getattr(base.feature, "lForm", "") or "")
+    )
+    candidate = {
+        **item,
+        "canonical": f"{lemma}::{pos1}",
+        "pos1": pos1,
+        "pos2": str(getattr(base.feature, "pos2", "") or "*"),
+        "hiragana": lemma_reading,
+        "romaji": kana_to_romaji(lemma_reading),
+        "translation": "",
+    }
+    mapped = vocabulary_mapping(candidate, translation_provider)
+    if (
+        str(mapped.get("mapping_status", "")) != "dictionary"
+        or not str(mapped.get("translation", "")).strip()
+    ):
+        return False
+    item.update(
+        {
+            "canonical": str(mapped["token_id"]),
+            "pos1": pos1,
+            "pos2": candidate["pos2"],
+            "hiragana": str(mapped.get("hiragana", lemma_reading)),
+            "romaji": str(mapped.get("romaji", kana_to_romaji(lemma_reading))),
+            "translation": str(mapped["translation"]),
+            "vocabulary": mapped,
+        }
+    )
+    return True
+
+
+def dictionary_nominal_suffix_items(
+    row: Mapping[str, Any], translation_provider: TranslationProvider
+) -> list[dict[str, Any]]:
+    """Expose an independently meaningful dictionary-backed noun suffix."""
+    if str(row.get("pos1", "")) != "名詞":
+        return []
+    surface = str(row.get("surface", ""))
+    if not surface:
+        return []
+    nodes = [node for node in get_tagger()(surface) if token_node_is_lexical(node)]
+    if len(nodes) < 2 or "".join(str(node.surface) for node in nodes) != surface:
+        return []
+    try:
+        row_start = int(row.get("start", 0))
+    except (TypeError, ValueError):
+        row_start = 0
+    result: list[dict[str, Any]] = []
+    cursor = 0
+    for node in nodes:
+        node_surface = str(node.surface)
+        node_start = row_start + cursor
+        cursor += len(node_surface)
+        if not (
+            str(getattr(node.feature, "pos1", "")) == "接尾辞"
+            and str(getattr(node.feature, "pos2", "")) == "名詞的"
+        ):
+            continue
+        standalone = analyze_sentence_with_cache(
+            node_surface, translation_provider=translation_provider
+        )
+        candidates = standalone.get("tokens", [])
+        if len(candidates) != 1:
+            continue
+        candidate = dict(candidates[0])
+        vocabulary = dict(candidate.get("vocabulary") or {})
+        if (
+            str(vocabulary.get("mapping_status", "")) != "dictionary"
+            or not str(vocabulary.get("translation", "")).strip()
+            or not str(vocabulary.get("dictionary_id", "")).strip()
+        ):
+            continue
+        candidate["vocabulary"] = vocabulary
+        candidate["start"] = node_start
+        candidate["end"] = node_start + len(node_surface)
+        result.append(candidate)
+    return result
 
 
 def vocabulary_mapping(

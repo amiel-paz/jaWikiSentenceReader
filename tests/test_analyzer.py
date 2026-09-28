@@ -1,7 +1,11 @@
 from pathlib import Path
 from typing import Any
 
-from wiki_reader.analyzer import analyze_article, analyze_sentence
+from wiki_reader.analyzer import (
+    analyze_article,
+    analyze_sentence,
+    analyze_sentence_with_cache,
+)
 
 
 class StaticTranslations:
@@ -17,11 +21,118 @@ class StaticTranslations:
         return next((self.glosses[key] for key in keys if key in self.glosses), "")
 
 
+class DictionaryTranslations(StaticTranslations):
+    def __init__(self, entries: dict[str, dict[str, str]]):
+        super().__init__({key: value["translation"] for key, value in entries.items()})
+        self.entries = entries
+
+    def lookup_entry(self, token: dict[str, Any]) -> dict[str, str] | None:
+        return self.entries.get(str(token.get("canonical", "")))
+
+    def lookup_reading(self, token: dict[str, Any]) -> str:
+        entry = self.lookup_entry(token)
+        return str(entry.get("hiragana", "")) if entry else ""
+
+    def lookup_sense_pos(self, token: dict[str, Any]) -> set[str]:
+        entry = self.lookup_entry(token)
+        return set(str(entry.get("sense_pos", "")).split(",")) if entry else set()
+
+
+def dictionary_entry(
+    headword: str,
+    hiragana: str,
+    translation: str,
+    *,
+    source: str = "JMdict",
+    sense_pos: str = "",
+) -> dict[str, str]:
+    return {
+        "source": source,
+        "entry_id": headword,
+        "headword": headword,
+        "hiragana": hiragana,
+        "romaji": "",
+        "translation": translation,
+        "sense_pos": sense_pos,
+    }
+
+
 def rows_by_surface(sentence: str, glosses: dict[str, str] | None = None):
     return {
         row["surface"]: row
         for row in analyze_sentence(sentence, StaticTranslations(glosses))
     }
+
+
+def cached_rows(sentence: str, provider: DictionaryTranslations):
+    return {
+        row["surface"]: row
+        for row in analyze_sentence_with_cache(
+            sentence, translation_provider=provider
+        )["tokens"]
+    }
+
+
+def test_shared_mapping_recovers_inflected_dictionary_lemma():
+    provider = DictionaryTranslations(
+        {
+            "過ごす::動詞": dictionary_entry("過ごす", "すごす", "to spend time"),
+        }
+    )
+
+    token = cached_rows("大学で過ごせる。", provider)["過ごせる"]
+
+    assert token["canonical"] == "過ごす::動詞"
+    assert token["translation"] == "to spend time"
+    assert token["vocabulary"]["token_id"] == "過ごす::動詞"
+
+
+def test_shared_mapping_rejects_name_homophone_for_inflected_verb():
+    provider = DictionaryTranslations(
+        {
+            "乗れる::動詞": dictionary_entry(
+                "ノレル", "のれる", "Norell", source="JMnedict"
+            ),
+            "乗る::動詞": dictionary_entry("乗る", "のる", "to board"),
+        }
+    )
+
+    token = cached_rows("電車に乗れる。", provider)["乗れる"]
+
+    assert token["canonical"] == "乗る::動詞"
+    assert token["translation"] == "to board"
+    assert token["vocabulary"]["source"] == "JMdict"
+
+
+def test_shared_mapping_disambiguates_productive_te_miru():
+    provider = DictionaryTranslations(
+        {
+            "のぞいて::表現": dictionary_entry(
+                "除いて", "のぞいて", "except", sense_pos="exp"
+            ),
+            "覗く::動詞": dictionary_entry("覗く", "のぞく", "to peek"),
+        }
+    )
+
+    token = cached_rows("のぞいてみる。", provider)["のぞいて"]
+
+    assert token["canonical"] == "覗く::動詞"
+    assert token["translation"] == "to peek"
+
+
+def test_shared_mapping_exposes_dictionary_backed_nominal_suffix():
+    provider = DictionaryTranslations(
+        {
+            "コーヒー::名詞": dictionary_entry("コーヒー", "こーひー", "coffee"),
+            "派::名詞": dictionary_entry("派", "は", "group; faction"),
+        }
+    )
+
+    token = cached_rows("コーヒー派。", provider)["コーヒー派"]
+    inherited = {item["canonical"]: item for item in token["inherited_tokens"]}
+
+    assert inherited["派::名詞"]["translation"] == "group; faction"
+    assert inherited["派::名詞"]["vocabulary"]["token_id"] == "派::名詞"
 
 
 def test_heading_text_is_analyzed_and_marked_with_ranges():

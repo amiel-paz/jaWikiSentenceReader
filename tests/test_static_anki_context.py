@@ -19,3 +19,4 @@ def test_card_front_can_prefer_matching_encountered_kana():
     assert "function displayExpression(row)" in script
     assert 'vocabulary.source === "Local override"' in script
     assert "/^[ぁ-ゖァ-ヺー]+$/" in script
+    assert 'test(canonical)) return canonical' in script

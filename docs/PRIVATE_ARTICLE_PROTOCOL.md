@@ -114,7 +114,15 @@ successful sync; Again cards may correctly enter Anki's *relearning* queue.
 The note keeps the canonical `lemma::POS` token ID for deduplication. If an
 encountered kana spelling exactly matches the complete mapped reading, that
 natural kana spelling is used on the front instead of an uncommon UniDic kanji
-lemma; explicit local vocabulary overrides remain authoritative.
+lemma. If the canonical lemma itself is kana, it stays in kana instead of being
+replaced by an uncommon dictionary kanji spelling (for example, `する`, not
+`為る`). Explicit local vocabulary overrides remain authoritative.
+
+The shared token mapping also recovers a validated dictionary lemma for an
+untranslated inflected form, rejects JMnedict name homophones for ordinary
+inflecting words, and uses productive V-てみる context to reject an unrelated
+fixed-expression entry. Independently meaningful dictionary-backed noun
+suffixes remain separate selectable tokens inside compounds.
 
 Surface and sentence examples are added only for occurrences explicitly marked
 **unrecognized**. Unmarked occurrences still affect scheduling but do not supply
@@ -124,6 +132,10 @@ to any examples already stored on the same canonical Anki note without erasing
 or duplicating earlier failures. Reveal otherwise shows hiragana, romaji,
 English meaning, the retained failed examples, article link, and dictionary
 identity.
+
+The article and roleplay tools share this note type and token identity while
+using separate decks. A sync may move, promote, and answer only the cards in
+its current batch; unrelated cards in the other deck are left untouched.
 
 ## 6. End only after a successful sync
 

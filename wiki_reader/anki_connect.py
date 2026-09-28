@@ -177,13 +177,7 @@ def sync_anki_cards(
     ]
     if not card_ids:
         raise AnkiConnectError("No Anki cards were generated for the session notes.")
-    existing_card_ids = [
-        int(card_id)
-        for note in existing_info
-        for card_id in note.get("cards", [])
-    ]
-    model_card_ids = list(dict.fromkeys([*existing_card_ids, *card_ids]))
-    connector.invoke("changeDeck", cards=model_card_ids, deck=deck)
+    connector.invoke("changeDeck", cards=card_ids, deck=deck)
 
     card_info = connector.invoke("cardsInfo", cards=card_ids)
     target_non_review = [
@@ -191,12 +185,7 @@ def sync_anki_cards(
         for card in card_info
         if int(card.get("type", 0)) != 2
     ]
-    model_new = connector.invoke(
-        "findCards", query=f'note:"{_query_escape(MODEL_NAME)}" is:new'
-    )
-    promote_to_review = list(
-        dict.fromkeys([*target_non_review, *(int(card_id) for card_id in model_new)])
-    )
+    promote_to_review = list(dict.fromkeys(target_non_review))
     if promote_to_review:
         connector.invoke("setDueDate", cards=promote_to_review, days="0")
         promoted_info = connector.invoke("cardsInfo", cards=promote_to_review)

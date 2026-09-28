@@ -20,6 +20,13 @@ Local prototype for reading Japanese Wikipedia articles one sentence at a time.
   examples.
 - Uses an encountered kana spelling on the card front when it exactly matches
   the mapped reading, while retaining the stable canonical token ID internally.
+- Keeps a kana canonical lemma in kana on the card front instead of replacing
+  it with an uncommon dictionary kanji spelling (for example, `する`, not `為る`).
+- Repairs untranslated inflected forms to a validated dictionary lemma, rejects
+  JMnedict name homophones for ordinary inflecting words, and uses productive
+  V-てみる context to reject an unrelated fixed-expression match.
+- Exposes independently meaningful, dictionary-backed noun suffixes as their
+  own selectable tokens even when UniDic folds them into a larger compound.
 
 Phrase hints are explanatory only. They are not included in session/global recognition accounting.
 
@@ -104,6 +111,11 @@ a successful sync. Every card has:
 The reader closes the session only after every card has synced and received its
 scheduler answer. The TSV endpoint remains available as a manual diagnostic
 fallback, but it cannot apply scheduler state.
+
+The roleplay and article decks share the note type and canonical token identity,
+but a sync moves, promotes, and answers only the cards in that sync batch. It
+does not move unrelated roleplay cards into the article deck or change their
+scheduler state.
 
 ## Optional Dictionary Index
 

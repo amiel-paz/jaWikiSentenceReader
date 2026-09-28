@@ -864,6 +864,7 @@ function displayExpression(row) {
   const canonical = row.canonical.split("::", 1)[0];
   const mapped = String(vocabulary.headword || canonical).trim() || canonical;
   if (vocabulary.source === "Local override") return mapped;
+  if (/^[ぁ-ゖァ-ヺー]+$/.test(canonical)) return canonical;
 
   const occurrences = tokenOccurrences(row.canonical).reverse();
   const exact = occurrences.find((item) => (

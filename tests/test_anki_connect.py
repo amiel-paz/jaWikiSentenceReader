@@ -71,7 +71,6 @@ def test_new_note_is_promoted_out_of_new_queue_then_answered_again():
                 [{"cardId": 201, "type": 0}],
                 [{"cardId": 201, "type": 2}],
             ],
-            "findCards": [[201]],
             "setDueDate": [True],
             "answerCards": [[True]],
         }
@@ -120,7 +119,6 @@ def test_existing_review_notes_are_updated_and_use_good_and_easy():
             ],
             "changeDeck": [None],
             "cardsInfo": [[{"cardId": 201, "type": 2}, {"cardId": 202, "type": 2}]],
-            "findCards": [[]],
             "answerCards": [[True, True]],
         }
     )
@@ -192,7 +190,6 @@ def test_sync_appends_new_context_to_existing_note():
             "multi": [[{"result": None, "error": None}]],
             "changeDeck": [None],
             "cardsInfo": [[{"cardId": 201, "type": 2}]],
-            "findCards": [[]],
             "answerCards": [[True]],
         }
     )
@@ -218,6 +215,47 @@ def test_sync_does_not_erase_context_when_incoming_card_has_no_example():
 
     assert surface == "離れ"
     assert sentence == "以前わからなかった文。"
+
+
+def test_sync_only_moves_and_promotes_cards_in_the_current_batch():
+    existing_info = [
+        {
+            "noteId": 101,
+            "cards": [201],
+            "fields": {"TokenId": {"value": "離れる::動詞"}},
+        },
+        {
+            "noteId": 999,
+            "cards": [299],
+            "fields": {"TokenId": {"value": "役割::名詞"}},
+        },
+    ]
+    target_info = [existing_info[0]]
+    client = FakeClient(
+        {
+            "version": [6],
+            "createDeck": [1],
+            "modelNames": [[MODEL_NAME]],
+            "modelFieldNames": [MODEL_FIELDS],
+            "findNotes": [[101, 999]],
+            "notesInfo": [existing_info, target_info],
+            "multi": [[{"result": None, "error": None}]],
+            "changeDeck": [None],
+            "cardsInfo": [
+                [{"cardId": 201, "type": 0}],
+                [{"cardId": 201, "type": 2}],
+            ],
+            "setDueDate": [True],
+            "answerCards": [[True]],
+        }
+    )
+
+    sync_anki_cards([sample_card()], client=client)
+
+    assert ("changeDeck", {"cards": [201], "deck": "Japanese::Sentence Reader"}) in client.calls
+    assert ("setDueDate", {"cards": [201], "days": "0"}) in client.calls
+    assert not any(action == "findCards" for action, _ in client.calls)
+    assert all(299 not in params.get("cards", []) for _, params in client.calls)
 
 
 def test_sync_rejects_missing_review_state():
