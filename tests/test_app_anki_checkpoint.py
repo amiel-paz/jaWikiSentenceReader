@@ -22,6 +22,7 @@ def install_memory_sync_log(monkeypatch):
     class MemorySyncLog:
         completed: dict[str, dict[str, Any]] = {}
         fingerprints: dict[str, dict[str, str]] = {}
+        summaries: dict[str, dict[str, dict[str, Any]]] = {}
 
         def __init__(self, path):
             self.path = path
@@ -49,6 +50,36 @@ def install_memory_sync_log(monkeypatch):
 
         def save_card_fingerprints(self, session_id, fingerprints):
             self.fingerprints.setdefault(session_id, {}).update(fingerprints)
+
+        def save_summary_cards(self, session_id, cards):
+            values = self.summaries.setdefault(session_id, {})
+            for card in cards:
+                values[card["canonical"]] = dict(card)
+
+        def vocabulary_summary(
+            self, *, current_session_id=None, current_cards=None
+        ):
+            from wiki_reader.anki_sync_log import (
+                aggregate_vocabulary_summary,
+                summary_card_record,
+            )
+
+            records = [
+                summary_card_record(session_id, card)
+                for session_id, cards in self.summaries.items()
+                for card in cards.values()
+            ]
+            if current_session_id and current_cards is not None:
+                records = [
+                    record
+                    for record in records
+                    if record["session_id"] != current_session_id
+                ]
+                records.extend(
+                    summary_card_record(current_session_id, card)
+                    for card in current_cards
+                )
+            return aggregate_vocabulary_summary(records)
 
     monkeypatch.setattr(app_module, "AnkiSyncLog", MemorySyncLog)
     return MemorySyncLog
@@ -161,3 +192,48 @@ def test_failed_checkpoint_does_not_mark_card_as_logged(monkeypatch):
     assert retried.status_code == 200
     assert retried.get_json()["tokens"] == 1
     assert attempts == 2
+
+
+def test_summary_includes_saved_cards_and_current_unsynced_state(monkeypatch):
+    install_memory_sync_log(monkeypatch)
+    monkeypatch.setattr(
+        app_module,
+        "sync_anki_cards",
+        lambda cards: {
+            "tokens": len(cards),
+            "created": len(cards),
+            "updated": 0,
+            "scheduled": {"again": len(cards)},
+        },
+    )
+    client = app_module.create_app().test_client()
+    saved = sample_card(
+        expression="離れる",
+        hiragana="はなれる",
+        romaji="hanareru",
+        translation="to leave",
+        article_title="First article",
+    )
+    client.post(
+        "/api/anki-checkpoint",
+        json={"session_id": SESSION_ID, "cards": [saved]},
+    )
+    current = {
+        **saved,
+        "recognized_count": 2,
+        "unrecognized_count": 0,
+        "review_state": "good",
+    }
+
+    response = client.post(
+        "/api/summary",
+        json={"session_id": SESSION_ID, "cards": [current]},
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["session_count"] == 1
+    assert payload["token_count"] == 1
+    assert payload["tokens"][0]["recognized_count"] == 2
+    assert payload["tokens"][0]["unrecognized_count"] == 0
+    assert payload["tokens"][0]["difference"] == 2

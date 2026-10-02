@@ -34,3 +34,16 @@ def test_log_session_checkpoints_without_ending_the_reader():
         script.index('logSessionButton.addEventListener("click"') :
         script.index('endSessionButton.addEventListener("click"')
     ]
+
+
+def test_persistent_vocabulary_summary_matches_roleplay_sorting_controls():
+    script = (PROJECT_ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    markup = (PROJECT_ROOT / "static" / "index.html").read_text(encoding="utf-8")
+
+    assert 'id="summary-button"' in markup
+    assert 'id="summary-dialog"' in markup
+    assert "Most recognized" in markup
+    assert "Most unrecognized" in markup
+    assert "Best difference" in markup
+    assert 'fetch("/api/summary", options)' in script
+    assert "right.difference - left.difference" in script

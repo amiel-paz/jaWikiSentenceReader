@@ -123,6 +123,7 @@ def create_app() -> Flask:
                 sync_log = AnkiSyncLog(base_dir / "data" / "anki_sync.sqlite")
                 previous = None if checkpoint else sync_log.get(session_id)
                 if previous is not None:
+                    sync_log.save_summary_cards(session_id, cards)
                     return jsonify({**previous, "replayed": True})
                 pending, fingerprints = sync_log.pending_cards(session_id, cards)
                 if pending:
@@ -143,6 +144,7 @@ def create_app() -> Flask:
                 if not checkpoint:
                     sync_log.save(session_id, result)
                 sync_log.save_card_fingerprints(session_id, fingerprints)
+                sync_log.save_summary_cards(session_id, cards)
         except ValueError as error:
             return jsonify({"error": str(error)}), 400
         except AnkiConnectError as error:
@@ -156,6 +158,23 @@ def create_app() -> Flask:
     @app.post("/api/anki-sync")
     def anki_sync():
         return sync_anki_request(checkpoint=False)
+
+    @app.route("/api/summary", methods=["GET", "POST"])
+    def vocabulary_summary():
+        payload = request.get_json(silent=True) or {}
+        cards = payload.get("cards") if isinstance(payload, dict) else None
+        session_id = str(payload.get("session_id", "")) if cards is not None else ""
+        if cards is not None and not isinstance(cards, list):
+            return jsonify({"error": "cards must be a list"}), 400
+        try:
+            sync_log = AnkiSyncLog(base_dir / "data" / "anki_sync.sqlite")
+            summary = sync_log.vocabulary_summary(
+                current_session_id=session_id or None,
+                current_cards=cards,
+            )
+        except ValueError as error:
+            return jsonify({"error": str(error)}), 400
+        return jsonify(summary)
 
     return app
 

@@ -10,9 +10,12 @@
     <main class="shell">
       <section class="topbar">
         <h1 id="article-title">Wikipedia Sentence Reader</h1>
-        <div class="theme-toggle" role="group" aria-label="Theme">
-          <button id="theme-light" type="button" aria-pressed="true">Light</button>
-          <button id="theme-dark" type="button" aria-pressed="false">Dark</button>
+        <div class="topbar-actions">
+          <button id="summary-button" class="summary-button" type="button">Summary</button>
+          <div class="theme-toggle" role="group" aria-label="Theme">
+            <button id="theme-light" type="button" aria-pressed="true">Light</button>
+            <button id="theme-dark" type="button" aria-pressed="false">Dark</button>
+          </div>
         </div>
       </section>
 
@@ -134,6 +137,29 @@
         </div>
       </div>
     </div>
+
+    <dialog id="summary-dialog" class="summary-dialog">
+      <div class="summary-dialog-heading">
+        <div>
+          <div class="summary-eyebrow">STUDY SUMMARY</div>
+          <h2>Tracked vocabulary</h2>
+        </div>
+        <button id="summary-close" class="summary-close" type="button" aria-label="Close">×</button>
+      </div>
+      <div class="summary-sort" role="tablist" aria-label="Sort tracked vocabulary">
+        <button type="button" role="tab" data-summary-sort="recognized" aria-selected="true">
+          Most recognized
+        </button>
+        <button type="button" role="tab" data-summary-sort="unrecognized" aria-selected="false">
+          Most unrecognized
+        </button>
+        <button type="button" role="tab" data-summary-sort="difference" aria-selected="false">
+          Best difference
+        </button>
+      </div>
+      <p id="vocabulary-summary-meta" class="vocabulary-summary-meta"></p>
+      <div id="vocabulary-summary-list" class="vocabulary-summary-list"></div>
+    </dialog>
 
     <script src="/app.js"></script>
   </body>

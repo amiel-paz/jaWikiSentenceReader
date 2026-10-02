@@ -150,6 +150,12 @@ answer unchanged checkpointed cards twice. The local reader is reset only after
 all operations succeed. If Anki or AnkiConnect is unavailable, the session
 remains open so it can be retried without losing marks.
 
+Use **Summary** to inspect vocabulary across saved article sessions. It shows
+recognized, unrecognized, always-recognized, and difference totals with the
+same three sorting views as the roleplay reader. The currently open session is
+included immediately from browser state; opening the summary does not sync or
+reschedule any Anki cards.
+
 ## Maintenance
 
 Re-run the dictionary build periodically. It resolves the current

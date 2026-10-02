@@ -17,6 +17,9 @@ Local prototype for reading Japanese Wikipedia articles one sentence at a time.
 - Syncs every token from viewed sentences into a dedicated, review-only Anki deck.
 - Logs new or changed cards to Anki mid-session without closing the reader or
   answering an unchanged card twice.
+- Provides a persistent vocabulary summary across reading sessions, including
+  the current unsynced session, sortable by recognition, non-recognition, or
+  recognition difference.
 - Adds card examples only from explicitly unrecognized occurrences; distinct
   later failures append to the same canonical note without overwriting earlier
   examples.
@@ -123,6 +126,12 @@ The roleplay and article decks share the note type and canonical token identity,
 but a sync moves, promotes, and answers only the cards in that sync batch. It
 does not move unrelated roleplay cards into the article deck or change their
 scheduler state.
+
+The **Summary** tab aggregates tracked vocabulary across successfully logged or
+ended reading sessions. While an article is open, its current in-memory state
+replaces that session's saved snapshot in the display, so the counts reflect
+marks made since the last checkpoint without writing anything to Anki. Sort by
+most recognized, most unrecognized, or best recognition difference.
 
 ## Optional Dictionary Index
 
