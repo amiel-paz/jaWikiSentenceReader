@@ -82,7 +82,9 @@ class ArticleCache:
 def title_from_input(value: str) -> str:
     value = value.strip()
     if not value:
-        raise ValueError("Enter a Japanese Wikipedia article URL or title.")
+        raise ValueError(
+            "Enter a Japanese Wikipedia URL/title or a private article key."
+        )
     parsed = urlparse(value)
     if parsed.netloc:
         if "wikipedia.org" not in parsed.netloc:

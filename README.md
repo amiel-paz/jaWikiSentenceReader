@@ -1,10 +1,16 @@
-# jaWikiSentenceReader
+# Japanese Sentence Reader
 
-Local prototype for reading Japanese Wikipedia articles one sentence at a time.
+Local prototype for reading Japanese text one sentence at a time. It supports
+Japanese Wikipedia directly and lawfully obtained articles, essays, and fiction
+through the private local import workflow.
+
+The repository and Python package retain the historical `jaWikiSentenceReader`
+name so existing installations, the persistent service, and the sibling
+roleplay tool continue working without migration.
 
 ## What It Does
 
-- Accepts a Japanese Wikipedia article URL/title or a private local article key.
+- Accepts a Japanese Wikipedia article URL/title or a private local text key.
 - Fetches article text through the MediaWiki API.
 - Shows one sentence at a time.
 - Tokenizes Japanese terms into canonical tokens.

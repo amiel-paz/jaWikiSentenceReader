@@ -354,7 +354,7 @@ function resetToLanding() {
   hidePopover();
   state.article = null;
   sessionSummaryList.replaceChildren();
-  articleTitle.textContent = "Wikipedia Sentence Reader";
+  articleTitle.textContent = "Japanese Sentence Reader";
   landing.hidden = false;
   reader.hidden = true;
   sessionFooter.hidden = true;

@@ -1,8 +1,9 @@
-# Private Article → Review Deck Protocol
+# Private Japanese Text → Review Deck Protocol
 
-This is the repeatable workflow for a Japanese article that you lawfully access
-and keep for private study. It deliberately keeps the downloaded source,
-extracted text, vocabulary overrides, and generated article outside Git.
+This is the repeatable workflow for a Japanese article, essay, or fiction text
+that you lawfully access and keep for private study. It deliberately keeps the
+downloaded source, extracted text, vocabulary overrides, and generated reader
+copy outside Git.
 
 ## 0. One-time setup
 
@@ -27,6 +28,10 @@ Save a PDF, HTML page, or plain-text copy outside the repository. Use content
 that is publicly available to you or that you are otherwise authorized to
 access. Do not bypass authentication, a paywall, DRM, or other access controls.
 Do not commit or redistribute the downloaded page or extracted article.
+
+The same local workflow can be used for downloaded 小説 and other fiction when
+your access and private-copy use are lawful. Keep the source private, respect
+the publisher's terms, and do not use the reader to redistribute the text.
 
 ## 2. Stage the article
 

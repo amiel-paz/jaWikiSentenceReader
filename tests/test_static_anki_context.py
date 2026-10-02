@@ -47,3 +47,13 @@ def test_persistent_vocabulary_summary_matches_roleplay_sorting_controls():
     assert "Best difference" in markup
     assert 'fetch("/api/summary", options)' in script
     assert "right.difference - left.difference" in script
+
+
+def test_reader_uses_source_neutral_product_name():
+    script = (PROJECT_ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    markup = (PROJECT_ROOT / "static" / "index.html").read_text(encoding="utf-8")
+
+    assert "Japanese Sentence Reader" in markup
+    assert 'articleTitle.textContent = "Japanese Sentence Reader"' in script
+    assert "Wikipedia Sentence Reader" not in markup
+    assert "Wikipedia Sentence Reader" not in script
