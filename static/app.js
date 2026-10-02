@@ -25,7 +25,9 @@ const sentenceIndex = document.querySelector("#sentence-index");
 const sentenceEl = document.querySelector("#sentence");
 const previousButton = document.querySelector("#previous");
 const nextButton = document.querySelector("#next");
+const logSessionButton = document.querySelector("#log-session");
 const endSessionButton = document.querySelector("#end-session");
+const checkpointStatus = document.querySelector("#checkpoint-status");
 const themeLightButton = document.querySelector("#theme-light");
 const themeDarkButton = document.querySelector("#theme-dark");
 const popover = document.querySelector("#popover");
@@ -70,6 +72,23 @@ previousButton.addEventListener("click", () => navigate(-1));
 nextButton.addEventListener("click", () => navigate(1));
 themeLightButton.addEventListener("click", () => setTheme("light"));
 themeDarkButton.addEventListener("click", () => setTheme("dark"));
+logSessionButton.addEventListener("click", async () => {
+  hidePopover();
+  logSessionButton.disabled = true;
+  endSessionButton.disabled = true;
+  checkpointStatus.textContent = "Logging new and changed cards…";
+  try {
+    await persistEncounteredPlaces();
+    const syncResult = await syncAnkiSession({ checkpoint: true });
+    checkpointStatus.textContent = ankiSyncResultLabel(syncResult);
+  } catch (error) {
+    checkpointStatus.textContent = error.message;
+    window.alert(error.message);
+  } finally {
+    logSessionButton.disabled = false;
+    endSessionButton.disabled = false;
+  }
+});
 endSessionButton.addEventListener("click", () => {
   hidePopover();
   renderSessionSummary();
@@ -203,6 +222,7 @@ function startSession(article) {
   reader.hidden = false;
   sessionFooter.hidden = false;
   formStatus.textContent = "";
+  checkpointStatus.textContent = "";
   render();
 }
 
@@ -941,17 +961,27 @@ async function refreshAnkiStatus() {
   ankiSyncStatus.textContent = `${summary} Connected to ${payload.deck}.`;
 }
 
-async function syncAnkiSession() {
+async function syncAnkiSession({ checkpoint = false } = {}) {
   const plan = ankiSyncPlan();
   if (plan.candidates.length === 0) {
-    return { tokens: 0, created: 0, updated: 0, scheduled: {} };
+    return {
+      tokens: 0,
+      created: 0,
+      updated: 0,
+      scheduled: {},
+      already_logged: 0,
+      checkpoint,
+      ended: !checkpoint,
+    };
   }
   if (plan.incomplete.length > 0) {
+    const action = checkpoint ? "logged" : "ended";
     throw new Error(
-      `${plan.incomplete.length} token(s) are missing a reading or translation; the session was not ended.`,
+      `${plan.incomplete.length} token(s) are missing a reading or translation; the session was not ${action}.`,
     );
   }
-  const response = await fetch("/api/anki-sync", {
+  const endpoint = checkpoint ? "/api/anki-checkpoint" : "/api/anki-sync";
+  const response = await fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ session_id: state.sessionId, cards: plan.ready }),
@@ -965,7 +995,9 @@ async function syncAnkiSession() {
 
 function ankiSyncResultLabel(result) {
   const scheduled = result.scheduled ?? {};
-  return `Anki synced ${result.tokens ?? 0} token(s): ${result.created ?? 0} added, ${result.updated ?? 0} updated; ${scheduled.again ?? 0} Again, ${scheduled.good ?? 0} Good, ${scheduled.easy ?? 0} Easy.`;
+  const action = result.checkpoint ? "logged" : "synced";
+  const unchanged = result.already_logged ?? 0;
+  return `Anki ${action} ${result.tokens ?? 0} changed token(s): ${result.created ?? 0} added, ${result.updated ?? 0} updated; ${scheduled.again ?? 0} Again, ${scheduled.good ?? 0} Good, ${scheduled.easy ?? 0} Easy; ${unchanged} unchanged.`;
 }
 
 function encounteredPlaces() {

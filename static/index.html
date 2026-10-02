@@ -53,7 +53,11 @@
       </section>
 
       <footer id="session-footer" class="session-footer" hidden>
-        <button id="end-session" class="end-button" type="button">End Session</button>
+        <div class="session-actions">
+          <button id="log-session" type="button">Log Session</button>
+          <button id="end-session" class="end-button" type="button">End Session</button>
+        </div>
+        <p id="checkpoint-status" class="checkpoint-status" aria-live="polite"></p>
         <small class="dictionary-attribution">
           Vocabulary data from
           <a href="https://www.edrdg.org/wiki/index.php/JMdict-EDICT_Dictionary_Project"
@@ -110,8 +114,10 @@
       <div class="confirm-panel" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
         <h2 id="confirm-title">End this session?</h2>
         <p>
-          This will sync every token from viewed sentences to Anki, apply its
-          Again/Good/Easy answer, and close the reader only after sync succeeds.
+          This will sync every new or changed token from viewed sentences to
+          Anki, apply its Again/Good/Easy answer, and close the reader only
+          after sync succeeds. Unchanged cards logged earlier are not answered
+          twice.
         </p>
         <div class="session-summary" aria-label="Session token summary">
           <div class="summary-header">

@@ -112,8 +112,7 @@ def create_app() -> Flask:
         status = anki_status()
         return jsonify(status), 200 if status["connected"] else 503
 
-    @app.post("/api/anki-sync")
-    def anki_sync():
+    def sync_anki_request(*, checkpoint: bool):
         payload = request.get_json(silent=True) or {}
         cards = payload.get("cards") if isinstance(payload, dict) else None
         if not isinstance(cards, list):
@@ -122,16 +121,41 @@ def create_app() -> Flask:
             session_id = validate_session_id(str(payload.get("session_id", "")))
             with ANKI_SYNC_LOCK:
                 sync_log = AnkiSyncLog(base_dir / "data" / "anki_sync.sqlite")
-                previous = sync_log.get(session_id)
+                previous = None if checkpoint else sync_log.get(session_id)
                 if previous is not None:
                     return jsonify({**previous, "replayed": True})
-                result = sync_anki_cards(cards)
-                sync_log.save(session_id, result)
+                pending, fingerprints = sync_log.pending_cards(session_id, cards)
+                if pending:
+                    result = sync_anki_cards(pending)
+                else:
+                    result = {
+                        "tokens": 0,
+                        "created": 0,
+                        "updated": 0,
+                        "scheduled": {},
+                    }
+                result = {
+                    **result,
+                    "already_logged": len(cards) - len(pending),
+                    "checkpoint": checkpoint,
+                    "ended": not checkpoint,
+                }
+                if not checkpoint:
+                    sync_log.save(session_id, result)
+                sync_log.save_card_fingerprints(session_id, fingerprints)
         except ValueError as error:
             return jsonify({"error": str(error)}), 400
         except AnkiConnectError as error:
             return jsonify({"error": str(error)}), 503
         return jsonify(result)
+
+    @app.post("/api/anki-checkpoint")
+    def anki_checkpoint():
+        return sync_anki_request(checkpoint=True)
+
+    @app.post("/api/anki-sync")
+    def anki_sync():
+        return sync_anki_request(checkpoint=False)
 
     return app
 

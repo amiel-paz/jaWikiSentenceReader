@@ -15,6 +15,8 @@ Local prototype for reading Japanese Wikipedia articles one sentence at a time.
 - Tracks session recognition choices in browser memory.
 - Previews the exact Anki front/reveal payload from each click-open token panel.
 - Syncs every token from viewed sentences into a dedicated, review-only Anki deck.
+- Logs new or changed cards to Anki mid-session without closing the reader or
+  answering an unchanged card twice.
 - Adds card examples only from explicitly unrecognized occurrences; distinct
   later failures append to the same canonical note without overwriting earlier
   examples.
@@ -90,9 +92,14 @@ content review before producing a reader-ready private article.
 ## Anki Review Sync
 
 Install AnkiConnect add-on `2055492159`, restart Anki, and leave it running while
-ending a session. Every token from every viewed sentence is created or updated
-in `Japanese::Sentence Reader`. New and learning cards are promoted to review
-before the session answer is applied:
+logging or ending a session. **Log Session** creates or updates every new or
+changed token from the sentences viewed so far while keeping the reader open.
+Repeated checkpoints and End Session skip identical card states, so an
+unchanged card is not answered twice. **End Session** handles any remaining
+changes and closes the reader only after success.
+
+Cards are stored in `Japanese::Sentence Reader`. New and learning cards are
+promoted to review before the session answer is applied:
 
 - unmarked occurrences count as unrecognized;
 - unrecognized greater than or equal to recognized → Again (`1`);

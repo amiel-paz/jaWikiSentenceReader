@@ -139,10 +139,16 @@ its current batch; unrelated cards in the other deck are left untouched.
 
 ## 6. End only after a successful sync
 
-End Session checks every token for the required reading and translation, then
-creates or updates the notes and applies Again/Good/Easy. The local reader is
-reset only after all operations succeed. If Anki or AnkiConnect is unavailable,
-the session remains open so it can be retried without losing marks.
+Use **Log Session** at any point to create or update cards without closing the
+reader. It sends only card states that are new or have changed since the last
+successful checkpoint. Repeating it without further reading or recognition
+changes is a no-op; a failed attempt remains pending for retry.
+
+**End Session** checks every token for the required reading and translation,
+then syncs only changes not already logged and closes the reader. It does not
+answer unchanged checkpointed cards twice. The local reader is reset only after
+all operations succeed. If Anki or AnkiConnect is unavailable, the session
+remains open so it can be retried without losing marks.
 
 ## Maintenance
 

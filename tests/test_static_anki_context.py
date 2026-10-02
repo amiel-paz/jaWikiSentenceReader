@@ -20,3 +20,17 @@ def test_card_front_can_prefer_matching_encountered_kana():
     assert 'vocabulary.source === "Local override"' in script
     assert "/^[ぁ-ゖァ-ヺー]+$/" in script
     assert 'test(canonical)) return canonical' in script
+
+
+def test_log_session_checkpoints_without_ending_the_reader():
+    script = (PROJECT_ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    markup = (PROJECT_ROOT / "static" / "index.html").read_text(encoding="utf-8")
+
+    assert 'id="log-session"' in markup
+    assert "Log Session" in markup
+    assert 'syncAnkiSession({ checkpoint: true })' in script
+    assert '"/api/anki-checkpoint"' in script
+    assert "resetToLanding();" not in script[
+        script.index('logSessionButton.addEventListener("click"') :
+        script.index('endSessionButton.addEventListener("click"')
+    ]

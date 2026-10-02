@@ -285,6 +285,23 @@ h1 {
   margin-top: 22px;
 }
 
+.session-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.session-actions button {
+  padding: 10px 14px;
+  font-weight: 700;
+}
+
+.checkpoint-status {
+  color: var(--muted);
+  font-size: 13px;
+  min-height: 20px;
+  text-align: center;
+}
+
 .dictionary-attribution {
   color: var(--muted);
   font-size: 11px;
@@ -534,7 +551,8 @@ h1 {
 @media (max-width: 720px) {
   .topbar,
   .input-row,
-  .confirm-actions {
+  .confirm-actions,
+  .session-actions {
     align-items: stretch;
     display: flex;
     flex-direction: column;
