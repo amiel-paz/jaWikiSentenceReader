@@ -1539,11 +1539,15 @@ def inflected_fixed_expression_form(items: list[object], text: str) -> str:
         trailing = nodes[index + 1 :]
         if any(str(candidate.surface) not in {"て", "で"} for candidate in trailing):
             return ""
-        lemma = str(getattr(node.feature, "lemma", "") or "").strip()
-        if not lemma:
+        dictionary_form = str(
+            getattr(node.feature, "orthBase", "")
+            or getattr(node.feature, "lemma", "")
+            or ""
+        ).strip()
+        if not dictionary_form:
             return ""
         prefix = text[items[0].start : items[index].start]
-        return f"{prefix}{lemma}"
+        return f"{prefix}{dictionary_form}"
     return ""
 
 

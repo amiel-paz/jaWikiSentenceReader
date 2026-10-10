@@ -268,6 +268,9 @@ def select_row(
 
 
 def contextual_gloss(rows: list[sqlite3.Row | tuple], token: dict[str, Any]) -> str:
+    expression = multi_sense_expression_gloss(rows, token)
+    if expression:
+        return expression
     grammatical = grammatical_context_gloss(rows, token)
     if grammatical:
         return grammatical
@@ -292,6 +295,33 @@ def contextual_gloss(rows: list[sqlite3.Row | tuple], token: dict[str, Any]) -> 
         and sense_pos_set(row) == selected_pos
     ]
     return merge_glosses(merged)
+
+
+def multi_sense_expression_gloss(
+    rows: list[sqlite3.Row | tuple], token: dict[str, Any]
+) -> str:
+    """Keep the useful senses of one dictionary expression on one token."""
+    if str(token.get("pos1", "")) != "表現":
+        return ""
+    token_headwords = exact_token_headwords(token)
+    compatible = [
+        row
+        for row in rows
+        if str(row[3]) in token_headwords and "exp" in sense_pos_set(row)
+    ]
+    selected = select_row(compatible, token)
+    if selected is None:
+        return ""
+    same_entry = [
+        row
+        for row in compatible
+        if str(row[1]) == str(selected[1])
+        and str(row[2]) == str(selected[2])
+        and str(row[3]) == str(selected[3])
+        and normalized_dictionary_reading(str(row[4]))
+        == normalized_dictionary_reading(str(selected[4]))
+    ]
+    return merge_glosses(same_entry)
 
 
 def grammatical_context_gloss(

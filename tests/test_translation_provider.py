@@ -436,6 +436,52 @@ def test_inflected_dictionary_expression_uses_lemma_but_keeps_full_surface(tmp_p
     assert not any(row["surface"] in {"我", "返っ"} for row in rows)
 
 
+def test_inflected_expression_prefers_kana_orthographic_base_for_lookup(tmp_path):
+    dictionary_path = tmp_path / "dictionary.sqlite"
+    write_dictionary(
+        dictionary_path,
+        [
+            (
+                "気になる",
+                "JMdict",
+                "1221690",
+                "気になる",
+                "きになる",
+                "to weigh on one's mind; to worry about; to be concerned about",
+                20,
+                1,
+                "exp,v5r",
+            ),
+            (
+                "気になる",
+                "JMdict",
+                "1221690",
+                "気になる",
+                "きになる",
+                "to be interested (in); to be curious (about); to catch one's eye",
+                20,
+                2,
+                "exp,v5r",
+            ),
+        ],
+    )
+
+    rows = analyze_sentence(
+        "なんとなく気になって聞き耳を立てる。",
+        SqliteDictionaryProvider(dictionary_path),
+    )
+    expression = next(row for row in rows if row["surface"] == "気になって")
+
+    assert expression["canonical"] == "気になる::表現"
+    assert expression["hiragana"] == "きになる"
+    assert expression["romaji"] == "kininaru"
+    assert expression["translation"] == (
+        "to weigh on one's mind; to worry about; to be concerned about; "
+        "to be interested (in); to be curious (about); to catch one's eye"
+    )
+    assert not any(row["surface"] in {"気", "なっ"} for row in rows)
+
+
 def test_dictionary_multiword_adverb_repairs_unidic_adverb_particle_split(tmp_path):
     dictionary_path = tmp_path / "dictionary.sqlite"
     write_dictionary(
