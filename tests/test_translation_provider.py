@@ -403,6 +403,37 @@ def test_dictionary_conjunction_expression_spans_particle_and_verb_tokens(tmp_pa
     assert rows["とはいえ"]["canonical"] == "とはいえ::表現"
     assert rows["とはいえ"]["hiragana"] == "とはいえ"
     assert rows["とはいえ"]["translation"] == "though; although; be that as it may; nonetheless"
+
+
+def test_inflected_dictionary_expression_uses_lemma_but_keeps_full_surface(tmp_path):
+    dictionary_path = tmp_path / "dictionary.sqlite"
+    write_dictionary(
+        dictionary_path,
+        [
+            (
+                "我に返る",
+                "JMdict",
+                "2125250",
+                "我に返る",
+                "われにかえる",
+                "to come to one's senses",
+                20,
+                1,
+                "exp,v5r",
+            ),
+        ],
+    )
+
+    rows = analyze_sentence(
+        "我に返ってふと前を見る。", SqliteDictionaryProvider(dictionary_path)
+    )
+    expression = next(row for row in rows if row["surface"] == "我に返って")
+
+    assert expression["canonical"] == "我に返る::表現"
+    assert expression["hiragana"] == "われにかえる"
+    assert expression["romaji"] == "warenikaeru"
+    assert expression["translation"] == "to come to one's senses"
+    assert not any(row["surface"] in {"我", "返っ"} for row in rows)
     assert "いえ" not in rows
 
 

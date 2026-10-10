@@ -954,12 +954,15 @@ def fixed_expression_token(
     place_matches: list[dict[str, Any]],
 ) -> dict[str, Any]:
     surface = sentence[items[0].start : items[-1].end]
-    reading = dictionary_expression_reading(surface, translation_provider)
+    dictionary_surface = dictionary_fixed_expression_form(
+        items, sentence, translation_provider
+    ) or surface
+    reading = dictionary_expression_reading(dictionary_surface, translation_provider)
     row = {
         "surface": surface,
         "pos1": "表現",
         "pos2": "固定表現",
-        "canonical": f"{surface}::表現",
+        "canonical": f"{dictionary_surface}::表現",
         "hiragana": reading,
         "romaji": kana_to_romaji(reading),
         "reading_status": "dictionary" if reading else "missing",
@@ -1494,10 +1497,50 @@ def dictionary_fixed_expression_items(
             continue
         candidates.append(items)
     for items in reversed(candidates):
-        surface = text[items[0].start : items[-1].end]
-        if dictionary_confirmed_fixed_expression(surface, translation_provider):
+        if dictionary_fixed_expression_form(items, text, translation_provider):
             return items
     return None
+
+
+def dictionary_fixed_expression_form(
+    items: list[object],
+    text: str,
+    translation_provider: TranslationProvider,
+) -> str:
+    """Return the dictionary form of an exact or inflected fixed expression."""
+    surface = text[items[0].start : items[-1].end]
+    if dictionary_confirmed_fixed_expression(surface, translation_provider):
+        return surface
+    normalized = inflected_fixed_expression_form(items, text)
+    if normalized and dictionary_confirmed_fixed_expression(
+        normalized, translation_provider
+    ):
+        return normalized
+    return ""
+
+
+def inflected_fixed_expression_form(items: list[object], text: str) -> str:
+    """Normalize the final verb in a dictionary expression to its lemma.
+
+    A trailing て/で belongs to the displayed conjugation but not the JMdict
+    headword, e.g. 我に返って -> 我に返る.  Requiring an expression connector
+    and a dictionary-confirmed normalized result keeps this from turning
+    ordinary productive verb phrases into fixed expressions.
+    """
+    nodes = [item.node for item in items]
+    for index in range(len(nodes) - 1, -1, -1):
+        node = nodes[index]
+        if str(getattr(node.feature, "pos1", "")) != "動詞":
+            continue
+        trailing = nodes[index + 1 :]
+        if any(str(candidate.surface) not in {"て", "で"} for candidate in trailing):
+            return ""
+        lemma = str(getattr(node.feature, "lemma", "") or "").strip()
+        if not lemma:
+            return ""
+        prefix = text[items[0].start : items[index].start]
+        return f"{prefix}{lemma}"
+    return ""
 
 
 def dictionary_confirmed_fixed_expression(
