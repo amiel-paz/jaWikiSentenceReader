@@ -363,6 +363,52 @@ def vocabulary_mapping(
 ) -> dict[str, str]:
     canonical = str(token.get("canonical", ""))
     lemma = canonical.split("::", 1)[0]
+    if (
+        str(token.get("pos1", "")) == "表現"
+        and str(token.get("pos2", "")) == "文法表現"
+        and str(token.get("translation", "")).strip()
+    ):
+        hiragana = str(token.get("hiragana", ""))
+        return {
+            "token_id": canonical,
+            "dictionary_id": f"Grammar:{canonical}",
+            "source": "Local grammar",
+            "headword": lemma,
+            "hiragana": hiragana,
+            "romaji": str(token.get("romaji", "") or kana_to_romaji(hiragana)),
+            "translation": str(token["translation"]),
+            "mapping_status": "grammar",
+        }
+    if canonical == "突き上げ::名詞" and str(
+        token.get("translation", "")
+    ).strip():
+        hiragana = str(token.get("hiragana", ""))
+        return {
+            "token_id": canonical,
+            "dictionary_id": f"Local:{canonical}",
+            "source": "Local vocabulary",
+            "headword": "突き上げ",
+            "hiragana": hiragana,
+            "romaji": str(token.get("romaji", "") or kana_to_romaji(hiragana)),
+            "translation": str(token["translation"]),
+            "mapping_status": "local",
+        }
+    if (
+        canonical == "詰める::動詞"
+        and str(token.get("pos2", "")) == "口語・追及"
+        and str(token.get("translation", "")).strip()
+    ):
+        hiragana = str(token.get("hiragana", ""))
+        return {
+            "token_id": canonical,
+            "dictionary_id": "Local:詰める::動詞:press",
+            "source": "Local override",
+            "headword": "詰める",
+            "hiragana": hiragana,
+            "romaji": str(token.get("romaji", "") or kana_to_romaji(hiragana)),
+            "translation": str(token["translation"]),
+            "mapping_status": "local",
+        }
     lookup = getattr(translation_provider, "lookup_entry", None)
     entry = lookup(token) if callable(lookup) else None
     if entry:
@@ -447,6 +493,42 @@ def analyze_sentence(
     while index < len(tagged):
         item = tagged[index]
         node = item.node
+        certainty_items = ni_chigai_nai_items(tagged, index)
+        if certainty_items is not None:
+            rows.append(
+                ni_chigai_nai_token(
+                    certainty_items,
+                    sentence,
+                    phrase_matches,
+                    place_matches,
+                )
+            )
+            index += len(certainty_items)
+            continue
+        pressure_items = tsukiage_items(tagged, index)
+        if pressure_items is not None:
+            rows.append(
+                tsukiage_token(
+                    pressure_items,
+                    sentence,
+                    phrase_matches,
+                    place_matches,
+                )
+            )
+            index += len(pressure_items)
+            continue
+        grilling_items = tsumeru_grilling_items(tagged, index)
+        if grilling_items is not None:
+            rows.append(
+                tsumeru_grilling_token(
+                    grilling_items,
+                    sentence,
+                    phrase_matches,
+                    place_matches,
+                )
+            )
+            index += len(grilling_items)
+            continue
         if not token_node_is_lexical(node):
             index += 1
             continue
@@ -601,6 +683,7 @@ def analyze_sentence(
                     phrase_matches,
                     place_matches,
                     next_node=next_lexical_node(tagged, index),
+                    previous_rows=rows,
                 )
             )
             index += 1
@@ -613,6 +696,7 @@ def analyze_sentence(
                     phrase_matches,
                     place_matches,
                     next_node=next_lexical_node(tagged, index),
+                    previous_rows=rows,
                 )
             )
             index += 1
@@ -628,6 +712,7 @@ def analyze_sentence(
                 phrase_matches,
                 place_matches,
                 next_node=next_lexical_node(tagged, index),
+                previous_rows=rows,
             )
         )
         index += 1
@@ -715,6 +800,7 @@ def token_row(
     phrase_matches: list[dict[str, Any]],
     place_matches: list[dict[str, Any]],
     next_node: object | None = None,
+    previous_rows: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     node = item.node
     reading = reading_fields([node])
@@ -732,6 +818,7 @@ def token_row(
         "phrases": overlapping_phrases(phrase_matches, item.start, item.end),
         "places": overlapping_places(place_matches, item.start, item.end),
         **next_node_context(next_node),
+        **previous_row_context(previous_rows),
     }
     apply_dictionary_reading_override(row, translation_provider)
     row["translation"] = grammar_token_translation(row) or translation_provider.lookup(row)
@@ -883,6 +970,140 @@ def fixed_expression_token(
     }
     row["translation"] = translation_provider.lookup(row)
     return row
+
+
+def ni_chigai_nai_items(
+    tagged: list[object], start: int
+) -> list[object] | None:
+    """Return the fixed certainty expression に違いない when it begins here."""
+    if start + 2 >= len(tagged):
+        return None
+    items = tagged[start : start + 3]
+    if [str(item.node.surface) for item in items] != ["に", "違い", "ない"]:
+        return None
+    if any(left.end != right.start for left, right in zip(items, items[1:])):
+        return None
+    return items
+
+
+def ni_chigai_nai_token(
+    items: list[object],
+    sentence: str,
+    phrase_matches: list[dict[str, Any]],
+    place_matches: list[dict[str, Any]],
+) -> dict[str, Any]:
+    surface = sentence[items[0].start : items[-1].end]
+    hiragana = "にちがいない"
+    return {
+        "surface": surface,
+        "pos1": "表現",
+        "pos2": "文法表現",
+        "canonical": "に違いない::表現",
+        "hiragana": hiragana,
+        "romaji": "ni chigai nai",
+        "reading_status": "grammar",
+        "translation": "must be; surely; there is no doubt that",
+        "start": items[0].start,
+        "end": items[-1].end,
+        "phrases": overlapping_phrases(
+            phrase_matches, items[0].start, items[-1].end
+        ),
+        "places": overlapping_places(
+            place_matches, items[0].start, items[-1].end
+        ),
+    }
+
+
+def tsukiage_items(tagged: list[object], start: int) -> list[object] | None:
+    """Recover the standalone noun 突き上げ from UniDic's 突 + 上げ split."""
+    if start + 1 >= len(tagged):
+        return None
+    items = tagged[start : start + 2]
+    if [str(item.node.surface) for item in items] != ["突", "上げ"]:
+        return None
+    if items[0].end != items[1].start:
+        return None
+    if start + 2 < len(tagged) and node_is_noun(tagged[start + 2].node):
+        return None
+    return items
+
+
+def tsukiage_token(
+    items: list[object],
+    sentence: str,
+    phrase_matches: list[dict[str, Any]],
+    place_matches: list[dict[str, Any]],
+) -> dict[str, Any]:
+    surface = sentence[items[0].start : items[-1].end]
+    hiragana = "つきあげ"
+    return {
+        "surface": surface,
+        "pos1": "名詞",
+        "pos2": "慣用名詞",
+        "canonical": "突き上げ::名詞",
+        "hiragana": hiragana,
+        "romaji": kana_to_romaji(hiragana),
+        "reading_status": "lexical_rule",
+        "translation": "pressure or pushback from below or from subordinates",
+        "start": items[0].start,
+        "end": items[-1].end,
+        "phrases": overlapping_phrases(
+            phrase_matches, items[0].start, items[-1].end
+        ),
+        "places": overlapping_places(
+            place_matches, items[0].start, items[-1].end
+        ),
+    }
+
+
+def tsumeru_grilling_items(
+    tagged: list[object], start: int
+) -> list[object] | None:
+    """Join 上司に詰められ as the colloquial passive of 詰める."""
+    if start < 2 or start + 1 >= len(tagged):
+        return None
+    if [str(item.node.surface) for item in tagged[start - 2 : start]] != [
+        "上司",
+        "に",
+    ]:
+        return None
+    items = tagged[start : start + 2]
+    base, passive = (item.node for item in items)
+    if str(getattr(base.feature, "lemma", "")) != "詰める":
+        return None
+    if str(getattr(passive.feature, "lemma", "")) != "られる":
+        return None
+    if items[0].end != items[1].start:
+        return None
+    return items
+
+
+def tsumeru_grilling_token(
+    items: list[object],
+    sentence: str,
+    phrase_matches: list[dict[str, Any]],
+    place_matches: list[dict[str, Any]],
+) -> dict[str, Any]:
+    surface = sentence[items[0].start : items[-1].end]
+    hiragana = "つめる"
+    return {
+        "surface": surface,
+        "pos1": "動詞",
+        "pos2": "口語・追及",
+        "canonical": "詰める::動詞",
+        "hiragana": hiragana,
+        "romaji": kana_to_romaji(hiragana),
+        "reading_status": "lexical_rule",
+        "translation": "to grill or press for answers; to call to account",
+        "start": items[0].start,
+        "end": items[-1].end,
+        "phrases": overlapping_phrases(
+            phrase_matches, items[0].start, items[-1].end
+        ),
+        "places": overlapping_places(
+            place_matches, items[0].start, items[-1].end
+        ),
+    }
 
 
 def tsutsu_aru_chain_token(
@@ -1148,6 +1369,20 @@ def next_node_context(node: object | None) -> dict[str, str]:
         "next_surface": str(getattr(node, "surface", "")),
         "next_pos1": str(getattr(node.feature, "pos1", "")),
     }
+
+
+def previous_row_context(
+    rows: list[dict[str, Any]] | None,
+) -> dict[str, list[str]]:
+    """Expose a small semantic window for reusable dictionary sense ranking."""
+    if not rows:
+        return {}
+    glosses = [
+        str(row.get("translation", "")).strip()
+        for row in reversed(rows[-3:])
+        if str(row.get("translation", "")).strip()
+    ]
+    return {"context_glosses": glosses} if glosses else {}
 
 
 def apply_dictionary_reading_override(

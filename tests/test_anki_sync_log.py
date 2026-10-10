@@ -99,6 +99,7 @@ def test_vocabulary_summary_aggregates_sessions_and_current_state(tmp_path):
     assert token["recognized_count"] == 3
     assert token["unrecognized_count"] == 1
     assert token["always_count"] == 1
+    assert token["always_recognized"] is False
     assert token["difference"] == 2
     assert token["session_count"] == 2
     assert {item["article_title"] for item in token["sessions"]} == {

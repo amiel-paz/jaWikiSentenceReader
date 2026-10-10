@@ -10,6 +10,12 @@ from typing import Any
 DEFAULT_DECK = "Japanese::Sentence Reader"
 MAX_CARDS_PER_EXPORT = 2_000
 REQUIRED_FIELDS = ("canonical", "expression", "hiragana", "romaji", "translation")
+MULTILINE_FIELDS = {
+    "surface",
+    "sentence",
+    "sentence_romaji",
+    "sentence_translation",
+}
 
 
 def build_anki_tsv(cards: list[dict[str, Any]], *, deck: str = DEFAULT_DECK) -> str:
@@ -47,7 +53,9 @@ def validated_card(card: dict[str, Any]) -> dict[str, str]:
     if not isinstance(card, dict):
         raise ValueError("Each Anki card must be an object.")
     normalized = {
-        str(key): single_line(value) if key != "sentence" else str(value).strip()
+        str(key): (
+            str(value).strip() if key in MULTILINE_FIELDS else single_line(value)
+        )
         for key, value in card.items()
         if value is not None
     }
@@ -82,18 +90,7 @@ def card_back(card: dict[str, str]) -> str:
         '<div style="margin-top:1rem;font-size:1.1rem">'
         f"{html.escape(card['translation'])}</div>",
     ]
-    surface = card.get("surface", "")
-    if surface and surface != card["expression"]:
-        values.append(
-            '<div style="margin-top:.8rem;color:#666">Seen as: '
-            f"{html.escape(surface)}</div>"
-        )
-    sentence = card.get("sentence", "")
-    if sentence:
-        values.append(
-            '<div style="margin-top:1rem;padding-top:.8rem;border-top:1px solid #aaa">'
-            f"{html.escape(sentence).replace(chr(10), '<br>')}</div>"
-        )
+    values.extend(card_context_examples(card))
     title = card.get("article_title", "")
     source_url = card.get("source_url", "")
     if title and source_url:
@@ -115,6 +112,48 @@ def card_back(card: dict[str, str]) -> str:
             f"{html.escape(label)}</div>"
         )
     return "".join(values)
+
+
+def card_context_examples(card: dict[str, str]) -> list[str]:
+    fields = [
+        context_lines(card.get("surface", "")),
+        context_lines(card.get("sentence", "")),
+        context_lines(card.get("sentence_romaji", "")),
+        context_lines(card.get("sentence_translation", "")),
+    ]
+    size = max((len(items) for items in fields), default=0)
+    examples: list[str] = []
+    for index in range(size):
+        surface, japanese, romaji, translation = [
+            items[index] if index < len(items) else "" for items in fields
+        ]
+        if not any((surface, japanese, romaji, translation)):
+            continue
+        parts = [
+            '<div style="margin-top:1rem;padding-top:.8rem;border-top:1px solid #aaa;text-align:left">'
+        ]
+        if surface and surface != card["expression"]:
+            parts.append(
+                '<div style="color:#666;font-size:.85rem">Seen as: '
+                f"{html.escape(surface)}</div>"
+            )
+        if japanese:
+            parts.append(f'<div style="font-family:serif">{html.escape(japanese)}</div>')
+        if romaji:
+            parts.append(
+                f'<div style="color:#666;font-size:.85rem">{html.escape(romaji)}</div>'
+            )
+        if translation:
+            parts.append(f'<div style="font-size:.9rem">{html.escape(translation)}</div>')
+        parts.append("</div>")
+        examples.append("".join(parts))
+    return examples
+
+
+def context_lines(value: str) -> list[str]:
+    if not str(value).strip():
+        return []
+    return [line.strip() for line in str(value).splitlines()]
 
 
 def card_tags(card: dict[str, str]) -> str:

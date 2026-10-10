@@ -4,13 +4,21 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_only_explicit_unrecognized_marks_supply_card_context():
+def test_explicit_recognized_and_unrecognized_marks_supply_recent_card_context():
     script = (PROJECT_ROOT / "static" / "app.js").read_text(encoding="utf-8")
 
-    assert 'choice !== "unrecognized"' in script
+    assert 'occurrence.choice === "recognized"' in script
+    assert 'occurrence.choice === "unrecognized"' in script
+    assert 'if (state.alwaysRecognized.has(canonical))' in script
+    assert "pairs.slice(-5)" in script
     assert "surface: context.surface" in script
     assert "sentence: context.sentence" in script
-    assert "function failedContextFields(canonical)" in script
+    assert "sentence_romaji: context.sentenceRomaji" in script
+    assert "sentence_translation: context.sentenceTranslation" in script
+    assert "meaning_key: vocabulary.dictionary_id" in script
+    assert "sentenceRomaji: String(aid.romaji" in script
+    assert "sentenceTranslation: String(aid.english" in script
+    assert "function referenceContextFields(canonical)" in script
 
 
 def test_card_front_can_prefer_matching_encountered_kana():
@@ -57,3 +65,48 @@ def test_reader_uses_source_neutral_product_name():
     assert 'articleTitle.textContent = "Japanese Sentence Reader"' in script
     assert "Wikipedia Sentence Reader" not in markup
     assert "Wikipedia Sentence Reader" not in script
+
+
+def test_sentence_romaji_and_english_are_spoiler_hidden_and_revealed_on_demand():
+    script = (PROJECT_ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    markup = (PROJECT_ROOT / "static" / "index.html").read_text(encoding="utf-8")
+    styles = (PROJECT_ROOT / "static" / "styles.css").read_text(encoding="utf-8")
+
+    assert 'id="sentence-aids"' in markup
+    assert 'id="sentence-romaji"' in markup
+    assert 'id="sentence-english"' in markup
+    assert "Reveal romaji + English" in markup
+    assert 'fetch("/api/sentence-aid"' in script
+    assert "revealedSentenceAids" in script
+    assert "scrollSentenceAidsIntoView" in script
+    assert ".sentence-aids:not(.revealed) .sentence-aids-content" in styles
+    assert ".sentence-aids.revealed .sentence-aids-cover" in styles
+
+
+def test_cached_private_article_skips_job_polling():
+    script = (PROJECT_ROOT / "static" / "app.js").read_text(encoding="utf-8")
+
+    assert "if (startPayload.article)" in script
+    assert "startSession(startPayload.article)" in script
+
+
+def test_viewing_a_sentence_does_not_auto_track_its_tokens():
+    script = (PROJECT_ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    start = script.index("function markSentenceViewed(sentence)")
+    end = script.index("\nfunction increment", start)
+    viewed_function = script[start:end]
+
+    assert "viewedCounts" not in script
+    assert "registerTokenCatalog" not in viewed_function
+    assert "increment(" not in viewed_function
+    assert "const encounters = counts.encounters;" in script
+
+
+def test_always_recognized_is_persistent_and_suppressed_from_anki():
+    script = (PROJECT_ROOT / "static" / "app.js").read_text(encoding="utf-8")
+
+    assert 'fetch("/api/always-recognized")' in script
+    assert 'card.review_state !== "easy"' in script
+    assert "summary_cards: plan.summaryCards" in script
+    assert "Always recognized · suppressed from Anki" in script
+    assert "logAlwaysRecognizedForSentence" not in script

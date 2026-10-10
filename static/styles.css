@@ -237,6 +237,63 @@ h1 {
   font-weight: 700;
 }
 
+.sentence-aids {
+  position: relative;
+  border-top: 1px solid var(--line);
+  margin-top: 18px;
+  min-height: 74px;
+  padding-top: 14px;
+}
+
+.sentence-aids:not(.revealed) .sentence-aids-content {
+  max-height: 58px;
+  overflow: hidden;
+  visibility: hidden;
+  user-select: none;
+}
+
+.sentence-romaji {
+  color: var(--blue);
+  font-size: 15px;
+  font-style: italic;
+  line-height: 1.65;
+}
+
+.sentence-english {
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1.65;
+  margin-top: 8px;
+}
+
+.sentence-aids-cover {
+  position: absolute;
+  inset: 8px 0 0;
+  width: 100%;
+  min-height: 58px;
+  padding: 12px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.sentence-aids-cover:hover {
+  background: var(--hover);
+}
+
+.sentence-aids-cover:disabled {
+  cursor: wait;
+  opacity: .72;
+}
+
+.sentence-aids.revealed .sentence-aids-cover {
+  display: none;
+}
+
+.sentence-aids.error .sentence-aids-cover {
+  border-color: var(--red);
+  color: var(--red);
+}
+
 .token {
   border-bottom: 3px solid transparent;
   cursor: pointer;
@@ -449,6 +506,19 @@ h1 {
   padding-top: 10px;
   text-align: left;
   white-space: pre-wrap;
+}
+
+.card-preview-sentence-romaji,
+.card-preview-sentence-translation {
+  font-size: 12px;
+  line-height: 1.55;
+  margin-top: 6px;
+  text-align: left;
+  white-space: pre-wrap;
+}
+
+.card-preview-sentence-romaji {
+  color: var(--muted);
 }
 
 .card-preview-answer {

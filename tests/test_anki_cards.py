@@ -12,6 +12,8 @@ def sample_card(**values):
         "romaji": "hanareru",
         "translation": "to leave; to be separated",
         "sentence": "地元を離れた。",
+        "sentence_romaji": "Jimoto o hanareta.",
+        "sentence_translation": "I left my hometown.",
         "article_title": "記事",
         "source_url": "https://example.test/article",
         "vocabulary_id": "JMdict:123",
@@ -33,6 +35,8 @@ def test_build_anki_tsv_has_import_headers_and_reveal_fields():
     assert "hanareru" in result
     assert "to leave; to be separated" in result
     assert "地元を離れた。" in result
+    assert "Jimoto o hanareta." in result
+    assert "I left my hometown." in result
     assert "ja_sentence_reader pos_動詞" in result
 
 

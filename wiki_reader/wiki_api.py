@@ -138,7 +138,12 @@ def first_sentence_entries(text: str, *, limit: int) -> list[dict[str, Any]]:
     return sentence_entries(text, limit=limit)
 
 
-def sentence_entries(text: str, *, limit: int | None = None) -> list[dict[str, Any]]:
+def sentence_entries(
+    text: str,
+    *,
+    limit: int | None = None,
+    include_line_fragments: bool = False,
+) -> list[dict[str, Any]]:
     sentences: list[dict[str, Any]] = []
     heading_stack: list[str] = []
     pending_headings: list[str] = []
@@ -153,8 +158,19 @@ def sentence_entries(text: str, *, limit: int | None = None) -> list[dict[str, A
             heading_stack.append(title)
             pending_headings = list(heading_stack)
             continue
-        for match in SENTENCE_RE.finditer(block):
-            sentence = re.sub(r"\s+", " ", match.group(0)).strip()
+        matches = list(SENTENCE_RE.finditer(block))
+        parts: list[str] = []
+        cursor = 0
+        for match in matches:
+            if include_line_fragments and match.start() > cursor:
+                parts.append(block[cursor : match.start()])
+            parts.append(match.group(0))
+            cursor = match.end()
+        if include_line_fragments and cursor < len(block):
+            parts.append(block[cursor:])
+
+        for part in parts:
+            sentence = re.sub(r"\s+", " ", part).strip()
             if sentence:
                 sentences.append({"text": sentence, "headings": pending_headings})
                 pending_headings = []

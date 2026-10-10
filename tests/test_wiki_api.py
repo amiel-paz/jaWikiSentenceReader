@@ -34,6 +34,19 @@ def test_first_sentence_helpers_still_apply_limit():
     assert len(first_sentence_entries(text, limit=2)) == 2
 
 
+def test_sentence_entries_can_preserve_dialogue_line_fragments():
+    text = "「はぁ......」\n「来ると思った。スミス」\n「かわいくない? フワフワしてて」"
+
+    entries = sentence_entries(text, include_line_fragments=True)
+
+    assert [entry["text"] for entry in entries] == [
+        "「はぁ......」",
+        "「来ると思った。",
+        "スミス」",
+        "「かわいくない? フワフワしてて」",
+    ]
+
+
 def test_article_cache_round_trips_payload(tmp_path):
     cache = ArticleCache(tmp_path / "article_cache.sqlite")
     payload = {

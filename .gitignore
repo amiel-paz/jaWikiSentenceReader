@@ -8,12 +8,15 @@ data/dictionary.sqlite
 data/analysis_cache.sqlite
 data/article_cache.sqlite
 data/anki_sync.sqlite
+data/always_recognized.json
 data/tmp_place_probe.sqlite
 data/wikidata_place_cache.sqlite
 data/wikimedia_reading_cache.sqlite
+data/sentence_aids.sqlite
 data/dictionary_sources/
 
 # Local runtime/cache files.
+tmp/node_modules
 instance/
 .DS_Store
 

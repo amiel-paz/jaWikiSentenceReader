@@ -11,6 +11,7 @@ from .wiki_api import sentence_entries
 
 PRIVATE_ARTICLE_PREFIX = "private:"
 PRIVATE_ARTICLE_KEY_RE = re.compile(r"[a-z0-9][a-z0-9_-]*")
+PRIVATE_ARTICLE_PARSER_VERSION = "line-fragments-v1"
 
 
 def is_private_article_input(value: str) -> bool:
@@ -41,9 +42,12 @@ def load_private_article(value: str, *, base_dir: Path) -> dict[str, Any]:
     article = {
         "title": title,
         "canonicalurl": str(payload.get("canonicalurl", "")).strip(),
-        "revision_id": f"private-{content_hash}",
+        "revision_id": f"private-{PRIVATE_ARTICLE_PARSER_VERSION}-{content_hash}",
         "revision_timestamp": payload.get("revision_timestamp"),
-        "sentences": sentence_entries(text),
+        # Downloaded prose often puts dialogue on its own line without a Japanese
+        # sentence-final mark (or uses ASCII punctuation after NFKC normalization).
+        # Preserve those line fragments so conversational passages are not dropped.
+        "sentences": sentence_entries(text, include_line_fragments=True),
     }
     if not article["sentences"]:
         raise ValueError("Private article does not contain any complete Japanese sentences.")

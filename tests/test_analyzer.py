@@ -238,6 +238,102 @@ def test_phrase_annotations_are_hover_metadata_not_canonical_tokens():
     assert "で" not in rows
 
 
+def test_ni_chigai_nai_is_one_selectable_grammar_token():
+    rows = rows_by_surface("彼女に違いない。")
+
+    token = rows["に違いない"]
+    assert token["canonical"] == "に違いない::表現"
+    assert token["hiragana"] == "にちがいない"
+    assert token["romaji"] == "ni chigai nai"
+    assert token["translation"] == "must be; surely; there is no doubt that"
+    assert "違い" not in rows
+    assert "ない" not in rows
+
+
+def test_ni_chigai_nai_has_a_stable_shared_vocabulary_mapping():
+    token = analyze_sentence_with_cache(
+        "彼女に違いない。",
+        translation_provider=StaticTranslations(),
+    )["tokens"][1]
+
+    assert token["vocabulary"] == {
+        "token_id": "に違いない::表現",
+        "dictionary_id": "Grammar:に違いない::表現",
+        "source": "Local grammar",
+        "headword": "に違いない",
+        "hiragana": "にちがいない",
+        "romaji": "ni chigai nai",
+        "translation": "must be; surely; there is no doubt that",
+        "mapping_status": "grammar",
+    }
+
+
+def test_tsukiage_is_one_contextually_correct_noun_token():
+    rows = rows_by_surface("工場からは突上げを食らう。")
+
+    token = rows["突上げ"]
+    assert token["canonical"] == "突き上げ::名詞"
+    assert token["hiragana"] == "つきあげ"
+    assert token["romaji"] == "tsukiage"
+    assert token["translation"] == (
+        "pressure or pushback from below or from subordinates"
+    )
+    assert "突" not in rows
+    assert "上げ" not in rows
+
+
+def test_tsukiage_has_a_stable_shared_vocabulary_mapping():
+    tokens = analyze_sentence_with_cache(
+        "工場からは突上げを食らう。",
+        translation_provider=StaticTranslations(),
+    )["tokens"]
+    token = next(item for item in tokens if item["surface"] == "突上げ")
+
+    assert token["vocabulary"] == {
+        "token_id": "突き上げ::名詞",
+        "dictionary_id": "Local:突き上げ::名詞",
+        "source": "Local vocabulary",
+        "headword": "突き上げ",
+        "hiragana": "つきあげ",
+        "romaji": "tsukiage",
+        "translation": "pressure or pushback from below or from subordinates",
+        "mapping_status": "local",
+    }
+
+
+def test_tsumeru_passive_is_one_contextual_grilling_token_after_boss():
+    rows = rows_by_surface("上司に詰められ、言葉に詰められた。")
+
+    token = rows["詰められ"]
+    assert token["canonical"] == "詰める::動詞"
+    assert token["hiragana"] == "つめる"
+    assert token["romaji"] == "tsumeru"
+    assert token["translation"] == (
+        "to grill or press for answers; to call to account"
+    )
+    assert rows["詰め"]["canonical"] == "詰める::動詞"
+    assert rows["詰め"]["translation"] == ""
+
+
+def test_contextual_tsumeru_sense_has_a_stable_anki_mapping():
+    tokens = analyze_sentence_with_cache(
+        "上司に詰められた。",
+        translation_provider=StaticTranslations(),
+    )["tokens"]
+    token = next(item for item in tokens if item["surface"] == "詰められ")
+
+    assert token["vocabulary"] == {
+        "token_id": "詰める::動詞",
+        "dictionary_id": "Local:詰める::動詞:press",
+        "source": "Local override",
+        "headword": "詰める",
+        "hiragana": "つめる",
+        "romaji": "tsumeru",
+        "translation": "to grill or press for answers; to call to account",
+        "mapping_status": "local",
+    }
+
+
 def test_dictionary_confirmed_compound_inherits_constituent_tokens():
     rows = rows_by_surface(
         "個人主義。",

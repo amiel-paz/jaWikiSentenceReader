@@ -268,6 +268,9 @@ def select_row(
 
 
 def contextual_gloss(rows: list[sqlite3.Row | tuple], token: dict[str, Any]) -> str:
+    grammatical = grammatical_context_gloss(rows, token)
+    if grammatical:
+        return grammatical
     compatible = context_sense_rows(rows, token)
     if not compatible:
         return ""
@@ -289,6 +292,105 @@ def contextual_gloss(rows: list[sqlite3.Row | tuple], token: dict[str, Any]) -> 
         and sense_pos_set(row) == selected_pos
     ]
     return merge_glosses(merged)
+
+
+def grammatical_context_gloss(
+    rows: list[sqlite3.Row | tuple], token: dict[str, Any]
+) -> str:
+    """Choose a dictionary sense whose grammar and usage fit this occurrence.
+
+    UniDic distinguishes adverbial mimetics from predicative 形状詞 even when
+    JMdict stores both under one entry.  Prefer the JMdict sense with the
+    corresponding part of speech, then use English usage qualifiers such as
+    ``(voice)`` only when nearby dictionary glosses support them.  This keeps
+    the rule useful for polysemous mimetics generally rather than naming any
+    particular word or sentence.
+    """
+    required_pos = grammatical_sense_pos(str(token.get("pos1", "")))
+    if not required_pos:
+        return ""
+
+    token_headwords = exact_token_headwords(token)
+    compatible = [
+        row
+        for row in rows
+        if str(row[3]) in token_headwords
+        and bool(required_pos & sense_pos_set(row))
+    ]
+    if not compatible:
+        return ""
+
+    selected_entry = select_row(compatible, token)
+    if selected_entry is None:
+        return ""
+    entry_rows = [
+        row
+        for row in compatible
+        if str(row[1]) == str(selected_entry[1])
+        and str(row[2]) == str(selected_entry[2])
+        and str(row[3]) == str(selected_entry[3])
+        and normalized_dictionary_reading(str(row[4]))
+        == normalized_dictionary_reading(str(selected_entry[4]))
+    ]
+
+    sense_groups: dict[int, list[sqlite3.Row | tuple]] = {}
+    for row in entry_rows:
+        sense_groups.setdefault(int(row[6]), []).append(row)
+    if not sense_groups:
+        return ""
+
+    context_words = english_words(
+        " ".join(
+            str(value)
+            for value in token.get("context_glosses", [])
+            if str(value).strip()
+        )
+    )
+
+    def group_qualifiers(group: list[sqlite3.Row | tuple]) -> set[str]:
+        return set().union(
+            *(trailing_usage_qualifier_words(str(row[0])) for row in group)
+        )
+
+    ranked: list[tuple[int, int, int, list[sqlite3.Row | tuple]]] = []
+    for sense_index, group in sense_groups.items():
+        qualifiers = group_qualifiers(group)
+        matches = len(qualifiers & context_words)
+        ranked.append((-matches, 1 if qualifiers else 0, sense_index, group))
+    ranked.sort(key=lambda item: item[:3])
+    return merge_glosses(ranked[0][3])
+
+
+def grammatical_sense_pos(pos1: str) -> set[str]:
+    """Return conservative JMdict POS matches for unambiguous UniDic classes."""
+    return {
+        "形状詞": {"adj-na"},
+        "副詞": {"adv", "adv-to"},
+        "接続詞": {"conj"},
+        "連体詞": {"adj-pn"},
+    }.get(pos1, set())
+
+
+def trailing_usage_qualifier_words(gloss: str) -> set[str]:
+    """Extract semantic qualifiers like ``voice`` from ``raspy (voice)``.
+
+    Leading parentheticals such as ``(almost) empty`` modify the definition
+    itself and are deliberately not treated as selectional restrictions.
+    """
+    qualifiers: set[str] = set()
+    for part in gloss.split("; "):
+        match = re.search(r"\(([^()]*)\)\s*$", part)
+        if match and match.start() > 0:
+            qualifiers.update(english_words(match.group(1)))
+    return qualifiers
+
+
+def english_words(text: str) -> set[str]:
+    return {
+        word
+        for word in re.findall(r"[a-z]+", text.lower())
+        if word not in {"a", "an", "and", "etc", "of", "or", "the", "to"}
+    }
 
 
 def context_sense_rows(

@@ -23,14 +23,18 @@ MODEL_FIELDS = [
     "Reading",
     "Romaji",
     "Meaning",
+    "MeaningKeys",
     "Surface",
     "Sentence",
+    "SentenceRomaji",
+    "SentenceTranslation",
     "Article",
     "SourceUrl",
     "Dictionary",
     "SessionStatus",
 ]
 REVIEW_EASE = {"again": 1, "good": 3, "easy": 4}
+CONTEXT_QUEUE_LIMIT = 5
 
 
 class AnkiConnectError(RuntimeError):
@@ -136,11 +140,26 @@ def sync_anki_cards(
             continue
         target_note_ids[token_id] = note_id
         previous = existing_fields.get(note_id, {})
-        fields["Surface"], fields["Sentence"] = merge_context_fields(
+        (
+            fields["Surface"],
+            fields["Sentence"],
+            fields["SentenceRomaji"],
+            fields["SentenceTranslation"],
+        ) = merge_context_examples(
             previous.get("Surface", ""),
             previous.get("Sentence", ""),
+            previous.get("SentenceRomaji", ""),
+            previous.get("SentenceTranslation", ""),
             fields.get("Surface", ""),
             fields.get("Sentence", ""),
+            fields.get("SentenceRomaji", ""),
+            fields.get("SentenceTranslation", ""),
+        )
+        fields["Meaning"], fields["MeaningKeys"] = merge_meaning_fields(
+            previous.get("Meaning", ""),
+            previous.get("MeaningKeys", ""),
+            fields.get("Meaning", ""),
+            fields.get("MeaningKeys", ""),
         )
         update_actions.append(
             {
@@ -306,30 +325,30 @@ def _ensure_model(client: AnkiClient) -> None:
             modelName=MODEL_NAME,
             inOrderFields=MODEL_FIELDS,
             css=_model_css(),
-            cardTemplates=[
-                {
-                    "Name": "Recognition",
-                    "Front": '<div class="expression">{{Expression}}</div>',
-                    "Back": (
-                        "{{FrontSide}}<hr id=answer>"
-                        '<div class="reading">{{Reading}}</div>'
-                        '<div class="romaji">{{Romaji}}</div>'
-                        '<div class="meaning">{{Meaning}}</div>'
-                        '<div class="surface">Seen as: {{Surface}}</div>'
-                        '<div class="sentence">{{Sentence}}</div>'
-                        '<div class="source"><a href="{{SourceUrl}}">{{Article}}</a></div>'
-                        '<div class="dictionary">{{Dictionary}}</div>'
-                    ),
-                }
-            ],
+            cardTemplates=_model_templates(),
         )
         return
     fields = client.invoke("modelFieldNames", modelName=MODEL_NAME)
     missing = [field for field in MODEL_FIELDS if field not in fields]
+    for field in missing:
+        client.invoke("modelFieldAdd", modelName=MODEL_NAME, fieldName=field)
     if missing:
-        raise AnkiConnectError(
-            f"Existing Anki model {MODEL_NAME!r} is missing fields: "
-            + ", ".join(missing)
+        client.invoke(
+            "updateModelTemplates",
+            model={
+                "name": MODEL_NAME,
+                "templates": {
+                    template["Name"]: {
+                        "Front": template["Front"],
+                        "Back": template["Back"],
+                    }
+                    for template in _model_templates()
+                },
+            },
+        )
+        client.invoke(
+            "updateModelStyling",
+            model={"name": MODEL_NAME, "css": _model_css()},
         )
 
 
@@ -364,34 +383,72 @@ def merge_context_fields(
     existing_sentence: str,
     incoming_surface: str,
     incoming_sentence: str,
+    *,
+    limit: int = CONTEXT_QUEUE_LIMIT,
 ) -> tuple[str, str]:
-    """Append distinct example pairs without erasing prior failed contexts."""
-    existing = _context_pairs(existing_surface, existing_sentence)
-    incoming = _context_pairs(incoming_surface, incoming_sentence)
-    pairs = list(existing)
-    seen = set(existing)
-    for pair in incoming:
-        if pair == ("", "") or pair in seen:
+    """Queue recent unique examples while preserving Surface/Sentence pairs."""
+    surface, sentence, _, _ = merge_context_examples(
+        existing_surface,
+        existing_sentence,
+        "",
+        "",
+        incoming_surface,
+        incoming_sentence,
+        "",
+        "",
+        limit=limit,
+    )
+    return surface, sentence
+
+
+def merge_context_examples(
+    existing_surface: str,
+    existing_sentence: str,
+    existing_romaji: str,
+    existing_translation: str,
+    incoming_surface: str,
+    incoming_sentence: str,
+    incoming_romaji: str,
+    incoming_translation: str,
+    *,
+    limit: int = CONTEXT_QUEUE_LIMIT,
+) -> tuple[str, str, str, str]:
+    """Queue recent examples while keeping all four context fields aligned."""
+    existing = _context_records(
+        existing_surface,
+        existing_sentence,
+        existing_romaji,
+        existing_translation,
+    )
+    incoming = _context_records(
+        incoming_surface,
+        incoming_sentence,
+        incoming_romaji,
+        incoming_translation,
+    )
+    records = list(existing)
+    for record in incoming:
+        if not any(record):
             continue
-        seen.add(pair)
-        pairs.append(pair)
-    return (
-        "<br>".join(html.escape(surface) for surface, _ in pairs),
-        "<br>".join(html.escape(sentence) for _, sentence in pairs),
+        key = record[:2]
+        records = [existing for existing in records if existing[:2] != key]
+        records.append(record)
+    records = records[-max(0, int(limit)) :] if limit else []
+    columns = list(zip(*records, strict=True)) if records else [(), (), (), ()]
+    return tuple(
+        "<br>".join(html.escape(value) for value in column) for column in columns
     )
 
 
 def _context_pairs(surface_value: str, sentence_value: str) -> list[tuple[str, str]]:
-    surfaces = _context_lines(surface_value)
-    sentences = _context_lines(sentence_value)
-    size = max(len(surfaces), len(sentences))
-    return [
-        (
-            surfaces[index] if index < len(surfaces) else "",
-            sentences[index] if index < len(sentences) else "",
-        )
-        for index in range(size)
-    ]
+    return [record[:2] for record in _context_records(surface_value, sentence_value, "", "")]
+
+
+def _context_records(*values: str) -> list[tuple[str, str, str, str]]:
+    columns = [_context_lines(value) for value in values]
+    size = max((len(column) for column in columns), default=0)
+    padded = [column + [""] * (size - len(column)) for column in columns]
+    return [tuple(column[index] for column in padded) for index in range(size)]
 
 
 def _context_lines(value: str) -> list[str]:
@@ -400,8 +457,66 @@ def _context_lines(value: str) -> list[str]:
     return [
         html.unescape(part).strip()
         for part in re.split(r"(?i)<br\s*/?>|\r?\n", str(value))
-        if html.unescape(part).strip()
     ]
+
+
+def merge_meaning_fields(
+    existing_meanings: str,
+    existing_keys: str,
+    incoming_meanings: str,
+    incoming_keys: str,
+) -> tuple[str, str]:
+    """Merge stable sense contributions without duplicating existing glosses."""
+    meanings = _context_lines(existing_meanings)
+    keys = _context_lines(existing_keys)[: len(meanings)]
+    keys += [""] * (len(meanings) - len(keys))
+    incoming_meaning_rows = _context_lines(incoming_meanings)
+    incoming_key_rows = _context_lines(incoming_keys)[: len(incoming_meaning_rows)]
+    incoming_key_rows += [""] * (
+        len(incoming_meaning_rows) - len(incoming_key_rows)
+    )
+    for meaning, key in zip(incoming_meaning_rows, incoming_key_rows, strict=True):
+        if not meaning:
+            continue
+        key_parts = meaning_key_parts(key)
+        match = next(
+            (
+                index
+                for index, existing_key in enumerate(keys)
+                if key_parts & meaning_key_parts(existing_key)
+            ),
+            None,
+        )
+        if match is None:
+            normalized = normalized_meaning(meaning)
+            match = next(
+                (
+                    index
+                    for index, existing_meaning in enumerate(meanings)
+                    if normalized and normalized_meaning(existing_meaning) == normalized
+                ),
+                None,
+            )
+        if match is None:
+            meanings.append(meaning)
+            keys.append("|".join(sorted(key_parts)))
+            continue
+        meanings[match] = meaning
+        keys[match] = "|".join(
+            sorted(meaning_key_parts(keys[match]) | key_parts)
+        )
+    return (
+        "<br>".join(html.escape(meaning) for meaning in meanings),
+        "<br>".join(html.escape(key) for key in keys),
+    )
+
+
+def meaning_key_parts(value: str) -> set[str]:
+    return {part.strip() for part in str(value).split("|") if part.strip()}
+
+
+def normalized_meaning(value: str) -> str:
+    return re.sub(r"\s+", " ", html.unescape(str(value))).strip(" .;").casefold()
 
 
 def _note_fields(card: dict[str, str]) -> dict[str, str]:
@@ -410,11 +525,15 @@ def _note_fields(card: dict[str, str]) -> dict[str, str]:
         for value in (card.get("dictionary_source", ""), card.get("vocabulary_id", ""))
         if value
     )
-    surface, sentence = merge_context_fields(
+    surface, sentence, sentence_romaji, sentence_translation = merge_context_examples(
+        "",
+        "",
         "",
         "",
         card.get("surface", ""),
         card.get("sentence", ""),
+        card.get("sentence_romaji", ""),
+        card.get("sentence_translation", ""),
     )
     return {
         "TokenId": html.escape(card["canonical"]),
@@ -422,8 +541,11 @@ def _note_fields(card: dict[str, str]) -> dict[str, str]:
         "Reading": html.escape(card["hiragana"]),
         "Romaji": html.escape(card["romaji"]),
         "Meaning": html.escape(card["translation"]),
+        "MeaningKeys": html.escape(card.get("meaning_key", "")),
         "Surface": surface,
         "Sentence": sentence,
+        "SentenceRomaji": sentence_romaji,
+        "SentenceTranslation": sentence_translation,
         "Article": html.escape(card.get("article_title", "")),
         "SourceUrl": html.escape(card.get("source_url", ""), quote=True),
         "Dictionary": html.escape(dictionary),
@@ -464,13 +586,45 @@ def _query_escape(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
+def _model_templates() -> list[dict[str, str]]:
+    return [
+        {
+            "Name": "Recognition",
+            "Front": '<div class="expression">{{Expression}}</div>',
+            "Back": (
+                "{{FrontSide}}<hr id=answer>"
+                '<div class="reading">{{Reading}}</div>'
+                '<div class="romaji">{{Romaji}}</div>'
+                '<div class="meaning">{{Meaning}}</div>'
+                "{{#Sentence}}"
+                '<div class="contexts">'
+                '<div class="context-label">Seen as</div>'
+                '<div class="surface">{{Surface}}</div>'
+                '<div class="context-label">Original</div>'
+                '<div class="sentence">{{Sentence}}</div>'
+                '<div class="context-label">Romaji</div>'
+                '<div class="sentence-romaji">{{SentenceRomaji}}</div>'
+                '<div class="context-label">Translation</div>'
+                '<div class="sentence-translation">{{SentenceTranslation}}</div>'
+                "</div>"
+                "{{/Sentence}}"
+                '<div class="source"><a href="{{SourceUrl}}">{{Article}}</a></div>'
+                '<div class="dictionary">{{Dictionary}}</div>'
+            ),
+        }
+    ]
+
+
 def _model_css() -> str:
     return """
 .card { font-family: -apple-system, BlinkMacSystemFont, sans-serif; text-align: center; }
 .expression { font-family: serif; font-size: __EXPRESSION_SIZE__; }
 .reading { font-size: 1.35rem; font-weight: 700; }
-.romaji, .surface, .source, .dictionary { color: #666; margin-top: .35rem; }
+.romaji, .surface, .sentence-romaji, .source, .dictionary { color: #666; margin-top: .35rem; }
 .meaning { font-size: 1.1rem; margin-top: 1rem; }
-.sentence { border-top: 1px solid #aaa; margin-top: 1rem; padding-top: .8rem; }
+.contexts { border-top: 1px solid #aaa; margin-top: 1rem; padding-top: .8rem; text-align: left; }
+.context-label { color: #777; font-size: .7rem; font-weight: 700; margin-top: .65rem; text-transform: uppercase; }
+.sentence { font-family: serif; }
+.sentence, .sentence-romaji, .sentence-translation, .surface { line-height: 1.55; }
 .source, .dictionary { font-size: .8rem; }
 """.replace("__EXPRESSION_SIZE__", MODEL_EXPRESSION_SIZE).strip()

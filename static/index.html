@@ -49,6 +49,20 @@
       <section id="reader" class="reader" aria-label="Sentence reader" hidden>
         <div class="sentence-index" id="sentence-index"></div>
         <p id="sentence" class="sentence"></p>
+        <section id="sentence-aids" class="sentence-aids" aria-label="Sentence reading aids">
+          <div class="sentence-aids-content">
+            <p id="sentence-romaji" class="sentence-romaji"></p>
+            <p id="sentence-english" class="sentence-english"></p>
+          </div>
+          <button
+            id="reveal-sentence-aids"
+            class="sentence-aids-cover"
+            type="button"
+            aria-expanded="false"
+          >
+            Reveal romaji + English
+          </button>
+        </section>
         <div class="nav">
           <button id="previous" type="button" aria-label="Previous sentence">←</button>
           <button id="next" type="button" aria-label="Next sentence">→</button>
@@ -107,6 +121,8 @@
         <div id="card-preview-meaning" class="card-preview-meaning"></div>
         <div id="card-preview-surface" class="card-preview-detail"></div>
         <div id="card-preview-sentence" class="card-preview-sentence"></div>
+        <div id="card-preview-sentence-romaji" class="card-preview-sentence-romaji"></div>
+        <div id="card-preview-sentence-translation" class="card-preview-sentence-translation"></div>
         <a id="card-preview-source" class="card-preview-source" target="_blank" rel="noreferrer"></a>
         <div id="card-preview-dictionary" class="card-preview-detail"></div>
         <div id="card-preview-answer" class="card-preview-answer"></div>

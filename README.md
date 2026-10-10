@@ -13,6 +13,9 @@ roleplay tool continue working without migration.
 - Accepts a Japanese Wikipedia article URL/title or a private local text key.
 - Fetches article text through the MediaWiki API.
 - Shows one sentence at a time.
+- Reveals full-sentence romaji and a natural English translation behind a
+  spoiler control, batch-generated on first load through the local Codex CLI
+  and cached for later visits.
 - Tokenizes Japanese terms into canonical tokens.
 - Adds readings, romaji, optional JMdict/JMnedict glosses, and contextual phrase hints.
 - Adds cached Wikimedia/Wikidata place annotations for likely place-name spans.
@@ -20,15 +23,23 @@ roleplay tool continue working without migration.
   when the source can be matched conservatively.
 - Tracks session recognition choices in browser memory.
 - Previews the exact Anki front/reveal payload from each click-open token panel.
-- Syncs every token from viewed sentences into a dedicated, review-only Anki deck.
+- Syncs explicitly marked tokens into a dedicated, review-only Anki deck.
 - Logs new or changed cards to Anki mid-session without closing the reader or
   answering an unchanged card twice.
 - Provides a persistent vocabulary summary across reading sessions, including
   the current unsynced session, sortable by recognition, non-recognition, or
   recognition difference.
-- Adds card examples only from explicitly unrecognized occurrences; distinct
-  later failures append to the same canonical note without overwriting earlier
-  examples.
+- Keeps a rolling Anki reference queue from explicitly recognized and
+  unrecognized occurrences: the five most recent distinct examples survive,
+  and repeated examples move to the newest position. Every retained example
+  includes the original Japanese sentence, full-sentence romaji, and its
+  natural English translation.
+- Treats always-recognized vocabulary as a persistent project-wide suppression
+  list: every occurrence stays highlighted, but no Anki card is created,
+  updated, scheduled, or answered for it.
+- Keeps polysemous vocabulary on one canonical card. Encountered meanings are
+  merged by stable dictionary/local sense identity, with normalized gloss text
+  as a fallback, so an already-known meaning is not duplicated.
 - Uses an encountered kana spelling on the card front when it exactly matches
   the mapped reading, while retaining the stable canonical token ID internally.
 - Keeps a kana canonical lemma in kana on the card front instead of replacing
@@ -40,6 +51,12 @@ roleplay tool continue working without migration.
   own selectable tokens even when UniDic folds them into a larger compound.
 
 Phrase hints are explanatory only. They are not included in session/global recognition accounting.
+
+Sentence reading aids are also display-only. They do not change token tracking,
+recognition counts, or Anki cards. On the first article load, all missing romaji
+and natural-English sentence aids are generated in consistent batches through
+the locally configured Codex CLI and persisted in `data/sentence_aids.sqlite`.
+Later loads and reveal actions use the cache and do not invoke the CLI again.
 
 ## Run
 
@@ -102,7 +119,7 @@ content review before producing a reader-ready private article.
 
 Install AnkiConnect add-on `2055492159`, restart Anki, and leave it running while
 logging or ending a session. **Log Session** creates or updates every new or
-changed token from the sentences viewed so far while keeping the reader open.
+changed token explicitly marked so far while keeping the reader open.
 Repeated checkpoints and End Session skip identical card states, so an
 unchanged card is not answered twice. **End Session** handles any remaining
 changes and closes the reader only after success.
@@ -110,18 +127,24 @@ changes and closes the reader only after success.
 Cards are stored in `Japanese::Sentence Reader`. New and learning cards are
 promoted to review before the session answer is applied:
 
-- unmarked occurrences count as unrecognized;
+- unmarked occurrences are ignored and do not enter tracking or Anki;
 - unrecognized greater than or equal to recognized → Again (`1`);
 - recognized greater than unrecognized → Good (`3`), due in a number of days
   equal to the recognition margin;
-- always recognized → Easy (`4`).
+- always recognized → persistently highlighted and suppressed from Anki.
+
+Choosing recognized or unrecognized later removes the token from the
+always-recognized suppression list. Always-recognized encounters never enter
+the card's rolling Surface/Sentence reference queue.
 
 Again may put a card into Anki's relearning queue, but no card remains New after
 a successful sync. Every card has:
 
 - the canonical Japanese expression on the front;
 - hiragana, romaji, and an English translation on reveal;
-- the observed surface form, source sentence, article source, and vocabulary ID;
+- up to five marked contexts, each with the observed surface form, original
+  Japanese sentence, full-sentence romaji, and natural English translation;
+- the article source and vocabulary ID;
 - stable canonical-token identity and part-of-speech-aware deduplication.
 
 The reader closes the session only after every card has synced and received its
@@ -157,9 +180,10 @@ Licensing and attribution should follow:
 
 ## Current Prototype Boundaries
 
-- Session/global display persistence is in-memory only; Anki retains the actual
-  card history and schedule.
-- Always-recognized is a per-session choice and maps to Anki Easy at sync.
+- Recognition counts remain in browser memory until they are logged or the
+  session ends; Anki retains the actual card history and schedule.
+- Always-recognized token IDs persist locally across articles and reader
+  restarts, and are excluded from Anki synchronization.
 - Direct review scheduling requires Anki and AnkiConnect to be running locally.
 - Phrase matching is experimental and shown in the click-open token panel.
 - Place annotations are generated from Japanese Wikipedia page hits with Wikidata IDs

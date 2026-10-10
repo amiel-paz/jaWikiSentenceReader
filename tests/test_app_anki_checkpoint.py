@@ -82,6 +82,20 @@ def install_memory_sync_log(monkeypatch):
             return aggregate_vocabulary_summary(records)
 
     monkeypatch.setattr(app_module, "AnkiSyncLog", MemorySyncLog)
+
+    class EmptyAlwaysRecognizedStore:
+        def __init__(self, path):
+            self.path = path
+
+        def tokens(self):
+            return []
+
+        def payload(self):
+            return {"token_ids": [], "tokens": []}
+
+    monkeypatch.setattr(
+        app_module, "AlwaysRecognizedStore", EmptyAlwaysRecognizedStore
+    )
     return MemorySyncLog
 
 
@@ -237,3 +251,67 @@ def test_summary_includes_saved_cards_and_current_unsynced_state(monkeypatch):
     assert payload["tokens"][0]["recognized_count"] == 2
     assert payload["tokens"][0]["unrecognized_count"] == 0
     assert payload["tokens"][0]["difference"] == 2
+
+
+def test_easy_card_is_saved_for_summary_but_never_sent_to_anki(monkeypatch):
+    memory_log = install_memory_sync_log(monkeypatch)
+    calls = []
+
+    monkeypatch.setattr(app_module, "sync_anki_cards", lambda cards: calls.append(cards))
+    client = app_module.create_app().test_client()
+    easy = sample_card(
+        expression="予約",
+        canonical="予約::名詞",
+        review_state="easy",
+        recognized_count=0,
+        unrecognized_count=0,
+    )
+
+    response = client.post(
+        "/api/anki-checkpoint",
+        json={
+            "session_id": SESSION_ID,
+            "cards": [easy],
+            "summary_cards": [easy],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["tokens"] == 0
+    assert calls == []
+    assert memory_log.summaries[SESSION_ID]["予約::名詞"]["review_state"] == "easy"
+
+
+def test_sync_cards_and_summary_cards_are_kept_separate(monkeypatch):
+    memory_log = install_memory_sync_log(monkeypatch)
+    calls = []
+
+    def fake_sync(cards):
+        calls.append(cards)
+        return {
+            "tokens": len(cards),
+            "created": len(cards),
+            "updated": 0,
+            "scheduled": {"again": len(cards)},
+        }
+
+    monkeypatch.setattr(app_module, "sync_anki_cards", fake_sync)
+    client = app_module.create_app().test_client()
+    again = sample_card()
+    easy = sample_card(canonical="予約::名詞", review_state="easy")
+
+    response = client.post(
+        "/api/anki-checkpoint",
+        json={
+            "session_id": SESSION_ID,
+            "cards": [again],
+            "summary_cards": [again, easy],
+        },
+    )
+
+    assert response.status_code == 200
+    assert calls == [[again]]
+    assert set(memory_log.summaries[SESSION_ID]) == {
+        "離れる::動詞",
+        "予約::名詞",
+    }

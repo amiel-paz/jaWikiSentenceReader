@@ -94,17 +94,23 @@ http://127.0.0.1:5001/?article=private%3A<key>
 
 ## 5. Read and mark tokens
 
-Every distinct token from every viewed sentence is included at End Session.
-The final state has this deterministic Anki meaning:
+Each sentence has a **Reveal romaji + English** control beneath it. The reveal
+is instant after the article loads. On the first load, all missing sentence aids
+are generated in consistent batches through the locally configured Codex CLI,
+using immediate adjacent context, and persisted in `data/sentence_aids.sqlite`.
+Later loads do not invoke the CLI for those sentences. These aids are
+display-only and never affect recognition counts or Anki synchronization.
 
-Unmarked occurrences count as unrecognized for scheduling. Repeated occurrences
-of the same canonical token are combined before scheduling.
+Only explicitly marked tokens are included at Log Session or End Session.
+Merely displaying or navigating through a sentence does not track its tokens.
+Repeated marked occurrences of the same canonical token are combined before
+scheduling.
 
 | Reader result | Anki answer | Effect |
 | --- | --- | --- |
 | unrecognized is greater than or equal to recognized | Again (`1`) | enters review/relearning at highest priority |
 | recognized is greater than unrecognized | Good (`3`) | due in `recognized - unrecognized` days |
-| always recognized | Easy (`4`) | longest standard answer delay |
+| always recognized | no Anki answer | persistently highlighted and completely suppressed from Anki |
 
 For a recognized majority, the positive difference is the priority margin. A
 1-vote margin is due in 1 day; a 5-vote margin is due in 5 days. This keeps
@@ -115,6 +121,13 @@ If a token is absent from the deck, its note is created. If its card is New or
 in a learning queue, it is first promoted to Review. The answer is then applied
 through Anki's scheduler. Consequently the deck contains no New cards after a
 successful sync; Again cards may correctly enter Anki's *relearning* queue.
+
+**Always recognized** is a project-wide suppression state rather than an Anki
+grade. Its canonical token ID persists locally, so every occurrence in the
+current article and future articles receives the always-recognized highlight.
+The reader never creates, updates, schedules, or answers an Anki card for that
+token. Explicitly choosing **recognized** or **unrecognized** later clears the
+suppression state.
 
 The note keeps the canonical `lemma::POS` token ID for deduplication. If an
 encountered kana spelling exactly matches the complete mapped reading, that
@@ -129,14 +142,22 @@ inflecting words, and uses productive V-てみる context to reject an unrelated
 fixed-expression entry. Independently meaningful dictionary-backed noun
 suffixes remain separate selectable tokens inside compounds.
 
-Surface and sentence examples are added only for occurrences explicitly marked
-**unrecognized**. Unmarked occurrences still affect scheduling but do not supply
-examples. Recognized and always-recognized occurrences likewise supply no
-context. Distinct unrecognized examples are kept in article order and appended
-to any examples already stored on the same canonical Anki note without erasing
-or duplicating earlier failures. Reveal otherwise shows hiragana, romaji,
-English meaning, the retained failed examples, article link, and dictionary
-identity.
+Reference examples form a rolling queue from occurrences explicitly marked
+**recognized** or **unrecognized**. Unmarked and always-recognized occurrences
+supply no context. The note retains the five most recent distinct examples;
+each keeps its observed Surface, original Japanese sentence, full-sentence
+romaji, and natural English translation aligned as one record. Seeing the same
+Surface/Sentence pair again moves its complete record to the newest position,
+and later syncs merge into the same queue. Reveal otherwise shows the token's
+hiragana, romaji, English meaning, the retained reference examples, article
+link, and dictionary identity.
+
+Polysemous vocabulary retains one canonical card and one combined scheduler
+history. Each encountered meaning contribution carries a stable dictionary or
+local sense key. Synchronization updates an existing keyed meaning, merges an
+exact normalized gloss when a legacy key is absent, and appends only genuinely
+new meanings. It does not require an LLM to decide whether the same known sense
+has already been stored.
 
 The article and roleplay tools share this note type and token identity while
 using separate decks. A sync may move, promote, and answer only the cards in

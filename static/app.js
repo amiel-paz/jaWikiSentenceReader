@@ -2,17 +2,19 @@ const state = {
   article: null,
   index: 0,
   sentenceMarks: new Map(),
+  sentenceMarkOrder: new Map(),
+  nextSentenceMarkOrder: 0,
   alwaysRecognized: new Set(),
   sessionCounts: new Map(),
-  viewedCounts: new Map(),
   globalCounts: new Map(),
   viewedSentenceIds: new Set(),
-  alwaysLoggedKeys: new Set(),
   tokenCatalog: new Map(),
   activeToken: null,
   sessionId: null,
   summarySort: "recognized",
   summary: null,
+  sentenceAidCache: new Map(),
+  revealedSentenceAids: new Set(),
 };
 
 const articleTitle = document.querySelector("#article-title");
@@ -25,6 +27,10 @@ const formStatus = document.querySelector("#form-status");
 const loadingBar = document.querySelector("#loading-bar");
 const sentenceIndex = document.querySelector("#sentence-index");
 const sentenceEl = document.querySelector("#sentence");
+const sentenceAids = document.querySelector("#sentence-aids");
+const sentenceRomaji = document.querySelector("#sentence-romaji");
+const sentenceEnglish = document.querySelector("#sentence-english");
+const revealSentenceAidsButton = document.querySelector("#reveal-sentence-aids");
 const previousButton = document.querySelector("#previous");
 const nextButton = document.querySelector("#next");
 const logSessionButton = document.querySelector("#log-session");
@@ -48,6 +54,8 @@ const cardPreviewRomaji = document.querySelector("#card-preview-romaji");
 const cardPreviewMeaning = document.querySelector("#card-preview-meaning");
 const cardPreviewSurface = document.querySelector("#card-preview-surface");
 const cardPreviewSentence = document.querySelector("#card-preview-sentence");
+const cardPreviewSentenceRomaji = document.querySelector("#card-preview-sentence-romaji");
+const cardPreviewSentenceTranslation = document.querySelector("#card-preview-sentence-translation");
 const cardPreviewSource = document.querySelector("#card-preview-source");
 const cardPreviewDictionary = document.querySelector("#card-preview-dictionary");
 const cardPreviewAnswer = document.querySelector("#card-preview-answer");
@@ -73,6 +81,9 @@ articleForm.addEventListener("submit", async (event) => {
 });
 previousButton.addEventListener("click", () => navigate(-1));
 nextButton.addEventListener("click", () => navigate(1));
+revealSentenceAidsButton.addEventListener("click", () => {
+  void revealSentenceAids(currentSentence());
+});
 themeLightButton.addEventListener("click", () => setTheme("light"));
 themeDarkButton.addEventListener("click", () => setTheme("dark"));
 document.querySelector("#summary-button").addEventListener("click", openSummary);
@@ -143,7 +154,9 @@ popover.addEventListener("click", (event) => {
   }
   const button = event.target.closest("[data-choice]");
   if (!button || !state.activeToken) return;
-  chooseToken(state.activeToken, button.dataset.choice);
+  void chooseToken(state.activeToken, button.dataset.choice).catch((error) => {
+    window.alert(error.message);
+  });
 });
 
 document.addEventListener("click", (event) => {
@@ -170,8 +183,15 @@ async function loadArticle(value) {
     if (!startResponse.ok) {
       throw new Error(startPayload.error || "Could not start article load.");
     }
+    if (startPayload.article) {
+      await startSession(startPayload.article);
+      return;
+    }
+    if (!startPayload.job_id) {
+      throw new Error("Article load did not return a job.");
+    }
     const article = await waitForArticleJob(startPayload.job_id);
-    startSession(article);
+    await startSession(article);
   } catch (error) {
     formStatus.textContent = error.message;
   } finally {
@@ -190,9 +210,9 @@ async function waitForArticleJob(jobId) {
     const total = Number(payload.total) || 0;
     const processed = Number(payload.processed) || 0;
     const progress = Number(payload.progress) || 0;
-    const message = total > 0
+    const message = payload.message || (total > 0
       ? `Analyzing sentence ${processed} of ${total}...`
-      : payload.message || "Loading article...";
+      : "Loading article...");
     setLoading(true, message, progress);
     if (payload.status === "complete") return payload.article;
     if (payload.status === "error") {
@@ -225,7 +245,7 @@ async function openSummary() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             session_id: state.sessionId,
-            cards: ankiSyncPlan().candidates,
+            cards: ankiSyncPlan().summaryCards,
           }),
         }
       : {};
@@ -310,8 +330,10 @@ function vocabularySummaryRow(token) {
     vocabularySummaryCount(token.unrecognized_count, "unrecognized", "unrecognized"),
     vocabularySummaryCount(formatDifference(token.difference), "difference", "difference"),
   );
-  if (token.always_count) {
-    counts.append(vocabularySummaryCount(token.always_count, "always", "always"));
+  if (token.always_recognized) {
+    counts.append(vocabularySummaryCount("active", "always recognized", "always"));
+  } else if (token.always_count) {
+    counts.append(vocabularySummaryCount(token.always_count, "past always", "always"));
   }
   row.append(word, counts);
   return row;
@@ -328,17 +350,26 @@ function formatDifference(value) {
   return value > 0 ? `+${value}` : String(value);
 }
 
-function startSession(article) {
+async function startSession(article) {
   state.article = article;
   state.index = 0;
   state.sentenceMarks = new Map();
-  state.alwaysRecognized = new Set();
+  state.sentenceMarkOrder = new Map();
+  state.nextSentenceMarkOrder = 0;
+  state.alwaysRecognized = await loadAlwaysRecognized();
   state.sessionCounts = new Map();
-  state.viewedCounts = new Map();
   state.viewedSentenceIds = new Set();
-  state.alwaysLoggedKeys = new Set();
   state.tokenCatalog = new Map();
   state.activeToken = null;
+  state.sentenceAidCache = new Map();
+  state.revealedSentenceAids = new Set();
+  for (const sentence of article.sentences) {
+    if (!sentence.sentence_aid) continue;
+    state.sentenceAidCache.set(sentenceAidKey(sentence), {
+      romaji: sentence.sentence_aid.romaji || "",
+      english: sentence.sentence_aid.english || "",
+    });
+  }
   state.sessionId = globalThis.crypto?.randomUUID?.()
     ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   articleTitle.textContent = article.title;
@@ -348,6 +379,15 @@ function startSession(article) {
   formStatus.textContent = "";
   checkpointStatus.textContent = "";
   render();
+}
+
+async function loadAlwaysRecognized() {
+  const response = await fetch("/api/always-recognized");
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || "Could not load always-recognized vocabulary.");
+  }
+  return new Set(payload.token_ids || []);
 }
 
 function resetToLanding() {
@@ -374,8 +414,83 @@ function render() {
   markSentenceViewed(sentence);
   renderSentenceIndex();
   sentenceEl.replaceChildren(...renderSentence(sentence));
+  renderSentenceAids(sentence);
   previousButton.disabled = state.index === 0;
   nextButton.disabled = state.index === state.article.sentences.length - 1;
+}
+
+function sentenceAidKey(sentence) {
+  return `${state.article?.revision_id || "article"}:${sentence.id}`;
+}
+
+function renderSentenceAids(sentence) {
+  const key = sentenceAidKey(sentence);
+  const aid = state.sentenceAidCache.get(key);
+  const revealed = state.revealedSentenceAids.has(key) && Boolean(aid);
+  sentenceRomaji.textContent = aid?.romaji || "";
+  sentenceEnglish.textContent = aid?.english || "";
+  sentenceAids.classList.toggle("revealed", revealed);
+  sentenceAids.classList.remove("error");
+  revealSentenceAidsButton.disabled = false;
+  revealSentenceAidsButton.textContent = "Reveal romaji + English";
+  revealSentenceAidsButton.title = "";
+  revealSentenceAidsButton.setAttribute("aria-expanded", String(revealed));
+}
+
+async function revealSentenceAids(sentence) {
+  const key = sentenceAidKey(sentence);
+  const existing = state.sentenceAidCache.get(key);
+  if (existing) {
+    state.revealedSentenceAids.add(key);
+    renderSentenceAids(sentence);
+    scrollSentenceAidsIntoView();
+    return;
+  }
+
+  sentenceAids.classList.remove("error");
+  revealSentenceAidsButton.disabled = true;
+  revealSentenceAidsButton.textContent = "Generating reading aids…";
+  try {
+    const response = await fetch("/api/sentence-aid", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        japanese: sentence.display_text,
+        previous: state.article.sentences[state.index - 1]?.display_text || "",
+        following: state.article.sentences[state.index + 1]?.display_text || "",
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.error || "Could not generate sentence reading aids.");
+    }
+    state.sentenceAidCache.set(key, {
+      romaji: payload.romaji || "",
+      english: payload.english || "",
+    });
+    state.revealedSentenceAids.add(key);
+    if (sentenceAidKey(currentSentence()) === key) {
+      renderSentenceAids(sentence);
+      scrollSentenceAidsIntoView();
+    }
+  } catch (error) {
+    if (sentenceAidKey(currentSentence()) !== key) return;
+    sentenceAids.classList.add("error");
+    revealSentenceAidsButton.disabled = false;
+    revealSentenceAidsButton.textContent = "Reading aids unavailable — retry";
+    revealSentenceAidsButton.title = error.message;
+  }
+}
+
+function scrollSentenceAidsIntoView() {
+  requestAnimationFrame(() => {
+    sentenceAids.scrollIntoView({
+      block: "nearest",
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "auto"
+        : "smooth",
+    });
+  });
 }
 
 function renderSentenceIndex() {
@@ -602,7 +717,7 @@ function ankiCardForActiveToken() {
     encounters: 0,
     recognitions: 0,
   };
-  const encounters = state.viewedCounts.get(entry.canonical) ?? 0;
+  const encounters = counts.encounters;
   const recognized = counts.recognitions;
   const unrecognized = Math.max(0, encounters - recognized);
   const reviewState = reviewStateForToken(
@@ -628,6 +743,8 @@ function renderCardPreview(card) {
     ? `Seen as: ${card.surface}`
     : "";
   cardPreviewSentence.textContent = card.sentence || "";
+  cardPreviewSentenceRomaji.textContent = card.sentence_romaji || "";
+  cardPreviewSentenceTranslation.textContent = card.sentence_translation || "";
   cardPreviewSource.textContent = card.article_title
     ? `Source: ${card.article_title}`
     : "";
@@ -636,6 +753,10 @@ function renderCardPreview(card) {
   cardPreviewDictionary.textContent = [card.dictionary_source, card.vocabulary_id]
     .filter(Boolean)
     .join(" · ");
+  if (card.review_state === "easy") {
+    cardPreviewAnswer.textContent = "Always recognized · suppressed from Anki";
+    return;
+  }
   const score = `${card.recognized_count} recognized / ${card.unrecognized_count} unrecognized`;
   const priority = card.priority_days
     ? ` · due in ${card.priority_days} day${card.priority_days === 1 ? "" : "s"}`
@@ -671,10 +792,16 @@ function positionPopover(anchor, event) {
   popover.style.left = `${Math.max(edge, left)}px`;
 }
 
-function chooseToken(token, choice) {
+async function chooseToken(token, choice) {
   if (choice === "always") {
-    chooseAlwaysRecognized(token);
+    await chooseAlwaysRecognized(token);
   } else {
+    const suppressed = affectedTokenEntries(token)
+      .map((item) => item.canonical)
+      .filter((canonical) => state.alwaysRecognized.has(canonical));
+    if (suppressed.length > 0) {
+      await persistAlwaysRecognized({ tokenIds: suppressed, enabled: false });
+    }
     logSentenceChoice(token, choice);
   }
   hidePopover();
@@ -690,71 +817,55 @@ function logSentenceChoice(token, choice) {
   if (previous) {
     for (const item of affected) decrement(item.canonical, previous);
   }
+  const order = ++state.nextSentenceMarkOrder;
   for (const item of affected) {
     registerTokenCatalog(item);
-    state.sentenceMarks.set(markKey(sentenceId, item.canonical), choice);
+    const itemKey = markKey(sentenceId, item.canonical);
+    state.sentenceMarks.set(itemKey, choice);
+    state.sentenceMarkOrder.set(itemKey, order);
     increment(item.canonical, choice);
   }
 }
 
-function chooseAlwaysRecognized(token) {
+async function chooseAlwaysRecognized(token) {
   const affected = affectedTokenEntries(token);
   for (const item of affected) {
     registerTokenCatalog(item);
-    state.alwaysRecognized.add(item.canonical);
   }
-  logAlwaysRecognizedForViewedSentences(affected.map((item) => item.canonical));
+  const cards = affected.map((item) => ankiCardFromRow({
+    ...item,
+    recognitions: 0,
+    unrecognized: 0,
+    reviewState: "easy",
+    priorityDays: null,
+  }));
+  await persistAlwaysRecognized({ cards, enabled: true });
 }
 
-function logAlwaysRecognizedForViewedSentences(canonicals) {
-  const canonicalSet = new Set(canonicals);
-  for (const sentence of state.article.sentences) {
-    if (!state.viewedSentenceIds.has(sentence.id)) continue;
-    logAlwaysRecognizedForSentence(sentence, canonicalSet);
+async function persistAlwaysRecognized({
+  cards = null,
+  tokenIds = null,
+  enabled,
+}) {
+  const body = { enabled };
+  if (cards) body.cards = cards;
+  if (tokenIds) body.token_ids = tokenIds;
+  const response = await fetch("/api/always-recognized", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || "Could not update always-recognized vocabulary.");
   }
-}
-
-function logAlwaysRecognizedForSentence(sentence, canonicalSet = state.alwaysRecognized) {
-  for (const token of sentence.tokens) {
-    for (const item of affectedTokenEntries({
-      ...token,
-      sentenceId: sentence.id,
-      sentenceText: sentence.display_text,
-    })) {
-      if (!canonicalSet.has(item.canonical)) continue;
-      registerTokenCatalog(item);
-      const key = markKey(sentence.id, item.canonical);
-      if (state.alwaysLoggedKeys.has(key)) continue;
-      const previous = state.sentenceMarks.get(key);
-      if (previous) {
-        decrement(item.canonical, previous);
-      }
-      state.sentenceMarks.set(key, "recognized");
-      increment(item.canonical, "recognized");
-      state.alwaysLoggedKeys.add(key);
-    }
-  }
+  state.alwaysRecognized = new Set(payload.token_ids || []);
 }
 
 function markSentenceViewed(sentence) {
   if (!state.viewedSentenceIds.has(sentence.id)) {
     state.viewedSentenceIds.add(sentence.id);
-    const sentenceCanonicals = new Set();
-    for (const token of sentence.tokens) {
-      for (const item of affectedTokenEntries({
-        ...token,
-        sentenceId: sentence.id,
-        sentenceText: sentence.display_text,
-      })) {
-        registerTokenCatalog(item);
-        sentenceCanonicals.add(item.canonical);
-      }
-    }
-    for (const canonical of sentenceCanonicals) {
-      state.viewedCounts.set(canonical, (state.viewedCounts.get(canonical) ?? 0) + 1);
-    }
   }
-  logAlwaysRecognizedForSentence(sentence);
 }
 
 function increment(canonical, choice) {
@@ -831,7 +942,7 @@ function sessionSummaryRows() {
       encounters: 0,
       recognitions: 0,
     };
-    const encounters = state.viewedCounts.get(entry.canonical) ?? 0;
+    const encounters = counts.encounters;
     const recognized = counts.recognitions;
     const unrecognized = Math.max(0, encounters - recognized);
     const reviewState = reviewStateForToken(
@@ -848,7 +959,9 @@ function sessionSummaryRows() {
       reviewState,
       priorityDays: reviewPriorityDays(reviewState, recognized, unrecognized),
     };
-  }).filter((row) => row.encounters > 0)
+  }).filter((row) => (
+    row.encounters > 0 || state.alwaysRecognized.has(row.canonical)
+  ))
     .sort(compareSessionSummaryRows);
 }
 
@@ -903,7 +1016,7 @@ function summaryRowElement(row) {
 function summaryMeta(row) {
   const reading = [row.hiragana, row.romaji].filter(Boolean).join(" · ");
   const answer = row.reviewState === "easy"
-    ? "Anki: Easy"
+    ? "Always recognized: not sent to Anki"
     : row.reviewState === "good" ? "Anki: Good" : "Anki: Again";
   const score = `score: ${row.recognitions} recognized / ${row.unrecognized} unrecognized`;
   const priority = row.priorityDays
@@ -936,7 +1049,10 @@ async function persistEncounteredPlaces() {
 function renderAnkiSyncStatus() {
   const plan = ankiSyncPlan();
   if (plan.candidates.length === 0) {
-    ankiSyncStatus.textContent = "Anki: no viewed vocabulary to sync.";
+    const suppressed = plan.summaryCards.length;
+    ankiSyncStatus.textContent = suppressed > 0
+      ? `Anki: no cards to sync; ${suppressed} always-recognized token(s) suppressed.`
+      : "Anki: no marked vocabulary to sync.";
     confirmEndButton.textContent = "End Session";
     return;
   }
@@ -944,7 +1060,11 @@ function renderAnkiSyncStatus() {
   const incomplete = plan.incomplete.length > 0
     ? ` ${plan.incomplete.length} token(s) are missing a reading or translation; sync is blocked.`
     : "";
-  ankiSyncStatus.textContent = `Anki: ${plan.ready.length} token(s) ready — ${counts.again} Again, ${counts.good} Good, ${counts.easy} Easy.${incomplete}`;
+  const suppressed = plan.summaryCards.length - plan.candidates.length;
+  const suppression = suppressed > 0
+    ? ` ${suppressed} always-recognized token(s) suppressed.`
+    : "";
+  ankiSyncStatus.textContent = `Anki: ${plan.ready.length} token(s) ready — ${counts.again} Again, ${counts.good} Good.${suppression}${incomplete}`;
   confirmEndButton.textContent = plan.incomplete.length === 0
     ? `End Session & Sync ${plan.ready.length} Token${plan.ready.length === 1 ? "" : "s"}`
     : "Cannot End: Incomplete Tokens";
@@ -952,9 +1072,10 @@ function renderAnkiSyncStatus() {
 }
 
 function ankiSyncPlan() {
-  const candidates = sessionSummaryRows()
-    .map(ankiCardFromRow);
+  const summaryCards = sessionSummaryRows().map(ankiCardFromRow);
+  const candidates = summaryCards.filter((card) => card.review_state !== "easy");
   return {
+    summaryCards,
     candidates,
     ready: candidates.filter(ankiCardIsReady),
     incomplete: candidates.filter((card) => !ankiCardIsReady(card)),
@@ -964,7 +1085,7 @@ function ankiSyncPlan() {
 function ankiCardFromRow(row) {
   const vocabulary = row.vocabulary ?? {};
   const canonical = row.canonical;
-  const context = failedContextFields(canonical);
+  const context = referenceContextFields(canonical);
   return {
     canonical,
     expression: displayExpression(row),
@@ -972,7 +1093,10 @@ function ankiCardFromRow(row) {
     hiragana: vocabulary.hiragana || row.hiragana,
     romaji: vocabulary.romaji || row.romaji,
     translation: vocabulary.translation || row.translation,
+    meaning_key: vocabulary.dictionary_id || `UniDic:${canonical}`,
     sentence: context.sentence,
+    sentence_romaji: context.sentenceRomaji,
+    sentence_translation: context.sentenceTranslation,
     article_title: state.article?.title || "",
     source_url: state.article?.canonicalurl || "",
     vocabulary_id: vocabulary.dictionary_id || `UniDic:${canonical}`,
@@ -984,22 +1108,48 @@ function ankiCardFromRow(row) {
   };
 }
 
-function failedContextFields(canonical) {
+function referenceContextFields(canonical) {
+  if (state.alwaysRecognized.has(canonical)) {
+    return {
+      surface: "",
+      sentence: "",
+      sentenceRomaji: "",
+      sentenceTranslation: "",
+    };
+  }
   const pairs = [];
-  const seen = new Set();
-  for (const occurrence of tokenOccurrences(canonical)) {
-    const choice = state.sentenceMarks.get(markKey(occurrence.sentenceId, canonical));
-    if (choice !== "unrecognized") continue;
+  const occurrences = tokenOccurrences(canonical)
+    .map((occurrence) => {
+      const key = markKey(occurrence.sentenceId, canonical);
+      return {
+        ...occurrence,
+        key,
+        choice: state.sentenceMarks.get(key),
+        order: state.sentenceMarkOrder.get(key) ?? 0,
+      };
+    })
+    .filter((occurrence) => (
+      occurrence.choice === "recognized" || occurrence.choice === "unrecognized"
+    ))
+    .sort((left, right) => left.order - right.order);
+  for (const occurrence of occurrences) {
     const surface = occurrence.surface.trim();
     const sentence = occurrence.sentence.trim();
-    const key = `${surface}\u0000${sentence}`;
-    if ((!surface && !sentence) || seen.has(key)) continue;
-    seen.add(key);
-    pairs.push({ surface, sentence });
+    const sentenceRomaji = occurrence.sentenceRomaji.trim();
+    const sentenceTranslation = occurrence.sentenceTranslation.trim();
+    if (!surface && !sentence) continue;
+    const existing = pairs.findIndex((item) => (
+      item.surface === surface && item.sentence === sentence
+    ));
+    if (existing >= 0) pairs.splice(existing, 1);
+    pairs.push({ surface, sentence, sentenceRomaji, sentenceTranslation });
   }
+  const recent = pairs.slice(-5);
   return {
-    surface: pairs.map((item) => item.surface).join("\n"),
-    sentence: pairs.map((item) => item.sentence).join("\n"),
+    surface: recent.map((item) => item.surface).join("\n"),
+    sentence: recent.map((item) => item.sentence).join("\n"),
+    sentenceRomaji: recent.map((item) => item.sentenceRomaji).join("\n"),
+    sentenceTranslation: recent.map((item) => item.sentenceTranslation).join("\n"),
   };
 }
 
@@ -1028,6 +1178,9 @@ function tokenOccurrences(canonical) {
   const occurrences = [];
   for (const sentence of state.article?.sentences ?? []) {
     if (!state.viewedSentenceIds.has(sentence.id)) continue;
+    const aid = state.sentenceAidCache.get(sentenceAidKey(sentence))
+      ?? sentence.sentence_aid
+      ?? {};
     const sentenceCanonicals = new Set();
     for (const token of sentence.tokens) {
       const entries = affectedTokenEntries({
@@ -1042,6 +1195,8 @@ function tokenOccurrences(canonical) {
           sentenceId: sentence.id,
           surface: String(entry.surface || ""),
           sentence: String(sentence.display_text || ""),
+          sentenceRomaji: String(aid.romaji || ""),
+          sentenceTranslation: String(aid.english || ""),
         });
       }
     }
@@ -1056,13 +1211,24 @@ function normalizedJapaneseReading(value) {
 }
 
 function ankiCardIsReady(card) {
+  const sentenceCount = contextLineCount(card.sentence);
+  const contextsReady = sentenceCount === 0 || (
+    contextLineCount(card.sentence_romaji) === sentenceCount
+      && contextLineCount(card.sentence_translation) === sentenceCount
+  );
   return Boolean(
     card.canonical
       && card.expression
       && card.hiragana
       && card.romaji
-      && card.translation,
+      && card.translation
+      && contextsReady
   );
+}
+
+function contextLineCount(value) {
+  if (!String(value || "").trim()) return 0;
+  return String(value).split("\n").length;
 }
 
 function reviewStateCounts(cards) {
@@ -1087,7 +1253,7 @@ async function refreshAnkiStatus() {
 
 async function syncAnkiSession({ checkpoint = false } = {}) {
   const plan = ankiSyncPlan();
-  if (plan.candidates.length === 0) {
+  if (plan.summaryCards.length === 0) {
     return {
       tokens: 0,
       created: 0,
@@ -1108,7 +1274,11 @@ async function syncAnkiSession({ checkpoint = false } = {}) {
   const response = await fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ session_id: state.sessionId, cards: plan.ready }),
+    body: JSON.stringify({
+      session_id: state.sessionId,
+      cards: plan.ready,
+      summary_cards: plan.summaryCards,
+    }),
   });
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
@@ -1121,13 +1291,13 @@ function ankiSyncResultLabel(result) {
   const scheduled = result.scheduled ?? {};
   const action = result.checkpoint ? "logged" : "synced";
   const unchanged = result.already_logged ?? 0;
-  return `Anki ${action} ${result.tokens ?? 0} changed token(s): ${result.created ?? 0} added, ${result.updated ?? 0} updated; ${scheduled.again ?? 0} Again, ${scheduled.good ?? 0} Good, ${scheduled.easy ?? 0} Easy; ${unchanged} unchanged.`;
+  return `Anki ${action} ${result.tokens ?? 0} changed token(s): ${result.created ?? 0} added, ${result.updated ?? 0} updated; ${scheduled.again ?? 0} Again, ${scheduled.good ?? 0} Good; ${unchanged} unchanged.`;
 }
 
 function encounteredPlaces() {
   const places = new Map();
   for (const entry of state.tokenCatalog.values()) {
-    if ((state.viewedCounts.get(entry.canonical) ?? 0) <= 0) continue;
+    if ((state.sessionCounts.get(entry.canonical)?.encounters ?? 0) <= 0) continue;
     for (const place of entry.places ?? []) {
       const key = place.id || place.surface || place.label;
       if (!key) continue;

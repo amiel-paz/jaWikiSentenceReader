@@ -301,6 +301,78 @@ def test_no_modifier_context_prefers_adnominal_dictionary_senses(tmp_path):
     assert gloss == "appropriate; suitable; befitting; proportionate; considerable; substantial"
 
 
+def test_mimetic_senses_follow_unidic_grammar_and_nearby_semantic_context(tmp_path):
+    dictionary_path = tmp_path / "dictionary.sqlite"
+    write_dictionary(
+        dictionary_path,
+        [
+            (
+                "車内",
+                "JMdict",
+                "car-interior",
+                "車内",
+                "しゃない",
+                "inside a car (train, bus, etc.)",
+                0,
+                1,
+                "n",
+            ),
+            ("声", "JMdict", "voice", "声", "こえ", "voice", 0, 1, "n"),
+            (
+                "ガラガラ",
+                "JMdict",
+                "garagara",
+                "ガラガラ",
+                "がらがら",
+                "with a clatter; with a rattle",
+                20,
+                1,
+                "adv,adv-to",
+            ),
+            (
+                "ガラガラ",
+                "JMdict",
+                "garagara",
+                "ガラガラ",
+                "がらがら",
+                "(almost) empty; (mostly) vacant; bare; uninhabited",
+                20,
+                2,
+                "adj-no,adj-na",
+            ),
+            (
+                "ガラガラ",
+                "JMdict",
+                "garagara",
+                "ガラガラ",
+                "がらがら",
+                "raspy (voice); gravelly; husky",
+                20,
+                3,
+                "adj-no,adj-na",
+            ),
+        ],
+    )
+    provider = SqliteDictionaryProvider(dictionary_path)
+
+    empty_rows = {
+        row["surface"]: row for row in analyze_sentence("車内はガラガラだ。", provider)
+    }
+    voice_rows = {
+        row["surface"]: row for row in analyze_sentence("声がガラガラだ。", provider)
+    }
+    sound_rows = {
+        row["surface"]: row
+        for row in analyze_sentence("ガラガラと音がした。", provider)
+    }
+
+    assert empty_rows["ガラガラ"]["translation"] == (
+        "(almost) empty; (mostly) vacant; bare; uninhabited"
+    )
+    assert voice_rows["ガラガラ"]["translation"] == "raspy (voice); gravelly; husky"
+    assert sound_rows["ガラガラ"]["translation"] == "with a clatter; with a rattle"
+
+
 def test_dictionary_conjunction_expression_spans_particle_and_verb_tokens(tmp_path):
     dictionary_path = tmp_path / "dictionary.sqlite"
     write_dictionary(

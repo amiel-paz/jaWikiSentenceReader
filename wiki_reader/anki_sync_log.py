@@ -243,6 +243,7 @@ def aggregate_vocabulary_summary(records: list[dict[str, Any]]) -> dict[str, Any
                 "recognized_count": 0,
                 "unrecognized_count": 0,
                 "always_count": 0,
+                "always_recognized": False,
                 "sessions": [],
             },
         )

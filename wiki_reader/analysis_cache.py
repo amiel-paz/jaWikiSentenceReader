@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 
-ANALYSIS_CACHE_VERSION = "2026-09-27-shared-roleplay-token-rules"
+ANALYSIS_CACHE_VERSION = "2026-10-10-contextual-dictionary-senses"
 
 
 class AnalysisCache:
