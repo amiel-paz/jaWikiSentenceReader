@@ -17,6 +17,8 @@ const state = {
   revealedSentenceAids: new Set(),
 };
 
+const ACTIVE_SESSION_STORAGE_PREFIX = "japaneseReaderActiveSession:v1:";
+
 const articleTitle = document.querySelector("#article-title");
 const landing = document.querySelector("#landing");
 const reader = document.querySelector("#reader");
@@ -139,6 +141,7 @@ confirmEndButton.addEventListener("click", async () => {
     }
     ankiSyncStatus.textContent = ankiSyncResultLabel(syncResult);
     confirmOverlay.hidden = true;
+    clearActiveSession();
     resetToLanding();
   } catch (error) {
     window.alert(error.message);
@@ -372,13 +375,115 @@ async function startSession(article) {
   }
   state.sessionId = globalThis.crypto?.randomUUID?.()
     ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const restoredMarks = restoreActiveSession(article);
   articleTitle.textContent = article.title;
   landing.hidden = true;
   reader.hidden = false;
   sessionFooter.hidden = false;
   formStatus.textContent = "";
-  checkpointStatus.textContent = "";
+  checkpointStatus.textContent = restoredMarks > 0
+    ? `Restored ${restoredMarks} marked token${restoredMarks === 1 ? "" : "s"} from this reading session.`
+    : "";
   render();
+}
+
+function activeSessionStorageKey(article = state.article) {
+  if (!article) return "";
+  const identity = [
+    article.canonicalurl || "",
+    article.revision_id || "",
+    article.title || "",
+  ].join("\u0000");
+  return `${ACTIVE_SESSION_STORAGE_PREFIX}${encodeURIComponent(identity)}`;
+}
+
+function persistActiveSession() {
+  const key = activeSessionStorageKey();
+  if (!key || !state.sessionId) return;
+  const payload = {
+    version: 1,
+    sessionId: state.sessionId,
+    index: state.index,
+    sentenceMarks: [...state.sentenceMarks.entries()],
+    sentenceMarkOrder: [...state.sentenceMarkOrder.entries()],
+    nextSentenceMarkOrder: state.nextSentenceMarkOrder,
+    viewedSentenceIds: [...state.viewedSentenceIds],
+    revealedSentenceAids: [...state.revealedSentenceAids],
+  };
+  localStorage.setItem(key, JSON.stringify(payload));
+}
+
+function restoreActiveSession(article) {
+  const key = activeSessionStorageKey(article);
+  if (!key) return 0;
+  let payload;
+  try {
+    payload = JSON.parse(localStorage.getItem(key) || "null");
+  } catch {
+    localStorage.removeItem(key);
+    return 0;
+  }
+  if (!payload || payload.version !== 1) return 0;
+
+  const validSentences = new Set(article.sentences.map((sentence) => sentence.id));
+  const catalogByMark = new Map();
+  for (const sentence of article.sentences) {
+    for (const token of sentence.tokens) {
+      for (const entry of affectedTokenEntries({
+        ...token,
+        sentenceId: sentence.id,
+        sentenceText: sentence.display_text,
+      })) {
+        catalogByMark.set(markKey(sentence.id, entry.canonical), entry);
+      }
+    }
+  }
+
+  const savedOrders = new Map(Array.isArray(payload.sentenceMarkOrder)
+    ? payload.sentenceMarkOrder
+    : []);
+  const marks = Array.isArray(payload.sentenceMarks) ? payload.sentenceMarks : [];
+  for (const pair of marks) {
+    if (!Array.isArray(pair) || pair.length !== 2) continue;
+    const [keyValue, choice] = pair;
+    if (choice !== "recognized" && choice !== "unrecognized") continue;
+    const entry = catalogByMark.get(String(keyValue));
+    if (!entry) continue;
+    state.sentenceMarks.set(String(keyValue), choice);
+    const savedOrder = Number(savedOrders.get(String(keyValue)));
+    if (Number.isFinite(savedOrder) && savedOrder > 0) {
+      state.sentenceMarkOrder.set(String(keyValue), savedOrder);
+    }
+    registerTokenCatalog(entry);
+    increment(entry.canonical, choice);
+  }
+
+  state.nextSentenceMarkOrder = Math.max(
+    Number(payload.nextSentenceMarkOrder) || 0,
+    ...state.sentenceMarkOrder.values(),
+  );
+  state.viewedSentenceIds = new Set(
+    (Array.isArray(payload.viewedSentenceIds) ? payload.viewedSentenceIds : [])
+      .filter((sentenceId) => validSentences.has(sentenceId)),
+  );
+  state.revealedSentenceAids = new Set(
+    Array.isArray(payload.revealedSentenceAids)
+      ? payload.revealedSentenceAids.map(String)
+      : [],
+  );
+  const savedIndex = Number(payload.index);
+  if (Number.isFinite(savedIndex)) {
+    state.index = Math.max(0, Math.min(article.sentences.length - 1, Math.trunc(savedIndex)));
+  }
+  if (typeof payload.sessionId === "string" && payload.sessionId.length >= 8) {
+    state.sessionId = payload.sessionId;
+  }
+  return state.sentenceMarks.size;
+}
+
+function clearActiveSession(article = state.article) {
+  const key = activeSessionStorageKey(article);
+  if (key) localStorage.removeItem(key);
 }
 
 async function loadAlwaysRecognized() {
@@ -417,6 +522,7 @@ function render() {
   renderSentenceAids(sentence);
   previousButton.disabled = state.index === 0;
   nextButton.disabled = state.index === state.article.sentences.length - 1;
+  persistActiveSession();
 }
 
 function sentenceAidKey(sentence) {
@@ -443,6 +549,7 @@ async function revealSentenceAids(sentence) {
   if (existing) {
     state.revealedSentenceAids.add(key);
     renderSentenceAids(sentence);
+    persistActiveSession();
     scrollSentenceAidsIntoView();
     return;
   }
@@ -469,6 +576,7 @@ async function revealSentenceAids(sentence) {
       english: payload.english || "",
     });
     state.revealedSentenceAids.add(key);
+    persistActiveSession();
     if (sentenceAidKey(currentSentence()) === key) {
       renderSentenceAids(sentence);
       scrollSentenceAidsIntoView();
@@ -1365,3 +1473,5 @@ function setTheme(theme) {
   themeDarkButton.setAttribute("aria-pressed", String(isDark));
   localStorage.setItem("wikiReaderTheme", isDark ? "dark" : "light");
 }
+
+window.addEventListener("pagehide", persistActiveSession);

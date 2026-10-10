@@ -110,3 +110,24 @@ def test_always_recognized_is_persistent_and_suppressed_from_anki():
     assert "summary_cards: plan.summaryCards" in script
     assert "Always recognized · suppressed from Anki" in script
     assert "logAlwaysRecognizedForSentence" not in script
+
+
+def test_active_article_session_survives_reload_until_successful_end():
+    script = (PROJECT_ROOT / "static" / "app.js").read_text(encoding="utf-8")
+
+    assert 'ACTIVE_SESSION_STORAGE_PREFIX = "japaneseReaderActiveSession:v1:"' in script
+    assert "function persistActiveSession()" in script
+    assert "function restoreActiveSession(article)" in script
+    assert "sentenceMarks: [...state.sentenceMarks.entries()]" in script
+    assert "viewedSentenceIds: [...state.viewedSentenceIds]" in script
+    assert 'window.addEventListener("pagehide", persistActiveSession)' in script
+    assert "const restoredMarks = restoreActiveSession(article);" in script
+
+    successful_end = script[
+        script.index('confirmEndButton.addEventListener("click"') :
+        script.index('popover.addEventListener("click"')
+    ]
+    assert "clearActiveSession();" in successful_end
+    assert successful_end.index("await syncAnkiSession()") < successful_end.index(
+        "clearActiveSession();"
+    )
