@@ -434,6 +434,50 @@ def test_inflected_dictionary_expression_uses_lemma_but_keeps_full_surface(tmp_p
     assert expression["romaji"] == "warenikaeru"
     assert expression["translation"] == "to come to one's senses"
     assert not any(row["surface"] in {"我", "返っ"} for row in rows)
+
+
+def test_dictionary_multiword_adverb_repairs_unidic_adverb_particle_split(tmp_path):
+    dictionary_path = tmp_path / "dictionary.sqlite"
+    write_dictionary(
+        dictionary_path,
+        [
+            (
+                "どうやら",
+                "JMdict",
+                "1009020",
+                "どうやら",
+                "どうやら",
+                "possibly; apparently; (seem) likely; seemingly",
+                0,
+                1,
+                "adv",
+            ),
+            (
+                "どう",
+                "JMdict",
+                "wrong-sense",
+                "どう",
+                "どう",
+                "whoa (command used to stop a horse, etc.)",
+                20,
+                1,
+                "int",
+            ),
+        ],
+    )
+
+    rows = analyze_sentence(
+        "どうやらしりとりをしているようだ。",
+        SqliteDictionaryProvider(dictionary_path),
+    )
+    adverb = next(row for row in rows if row["surface"] == "どうやら")
+
+    assert adverb["canonical"] == "どうやら::副詞"
+    assert adverb["pos1"] == "副詞"
+    assert adverb["hiragana"] == "どうやら"
+    assert adverb["romaji"] == "douyara"
+    assert adverb["translation"] == "possibly; apparently; (seem) likely; seemingly"
+    assert not any(row["surface"] == "どう" for row in rows)
     assert "いえ" not in rows
 
 

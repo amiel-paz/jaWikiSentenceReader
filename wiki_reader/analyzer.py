@@ -958,11 +958,15 @@ def fixed_expression_token(
         items, sentence, translation_provider
     ) or surface
     reading = dictionary_expression_reading(dictionary_surface, translation_provider)
+    dictionary_pos = dictionary_fixed_expression_pos(
+        dictionary_surface, translation_provider
+    )
+    pos1 = "副詞" if dictionary_pos == "副詞" else "表現"
     row = {
         "surface": surface,
-        "pos1": "表現",
-        "pos2": "固定表現",
-        "canonical": f"{dictionary_surface}::表現",
+        "pos1": pos1,
+        "pos2": "複合副詞" if pos1 == "副詞" else "固定表現",
+        "canonical": f"{dictionary_surface}::{pos1}",
         "hiragana": reading,
         "romaji": kana_to_romaji(reading),
         "reading_status": "dictionary" if reading else "missing",
@@ -1546,6 +1550,12 @@ def inflected_fixed_expression_form(items: list[object], text: str) -> str:
 def dictionary_confirmed_fixed_expression(
     surface: str, translation_provider: TranslationProvider
 ) -> bool:
+    return bool(dictionary_fixed_expression_pos(surface, translation_provider))
+
+
+def dictionary_fixed_expression_pos(
+    surface: str, translation_provider: TranslationProvider
+) -> str:
     row = {
         "surface": surface,
         "pos1": "表現",
@@ -1554,14 +1564,18 @@ def dictionary_confirmed_fixed_expression(
         "hiragana": surface if kana_only(surface) else "",
     }
     if not translation_provider.lookup(row):
-        return False
+        return ""
     lookup_sense_pos = getattr(translation_provider, "lookup_sense_pos", None)
     if not callable(lookup_sense_pos):
-        return False
+        return ""
     sense_pos = set(lookup_sense_pos(row))
     if "conj" in sense_pos:
-        return True
-    return "exp" in sense_pos and len(surface) >= 3
+        return "表現"
+    if "exp" in sense_pos and len(surface) >= 3:
+        return "表現"
+    if len(surface) >= 3 and sense_pos & {"adv", "adv-to"}:
+        return "副詞"
+    return ""
 
 
 def dictionary_expression_reading(
