@@ -430,6 +430,33 @@ def test_following_noun_gloss_disambiguates_a_polysemous_noun(tmp_path):
     assert rain_rows["春雨"]["translation"] == "gentle spring rain"
 
 
+def test_dictionary_noun_in_a_comma_separated_list_beats_homophonous_verb(tmp_path):
+    dictionary_path = tmp_path / "dictionary.sqlite"
+    write_dictionary(
+        dictionary_path,
+        [
+            ("青梗菜", "JMdict", "greens", "青梗菜", "ちんげんさい", "bok choy", 0, 1, "n"),
+            ("もやし", "JMdict", "1517810", "萌やし", "もやし", "bean sprouts", 20, 1, "n"),
+            ("燃やす", "JMdict", "1582900", "燃やす", "もやす", "to burn", 0, 1, "v5s,vt"),
+            ("れんこん", "JMdict", "lotus", "蓮根", "れんこん", "lotus root", 0, 1, "n"),
+        ],
+    )
+
+    rows = {
+        row["surface"]: row
+        for row in analyze_sentence(
+            "具材は青梗菜、もやし、れんこん。",
+            SqliteDictionaryProvider(dictionary_path),
+        )
+    }
+
+    assert rows["もやし"]["canonical"] == "もやし::名詞"
+    assert rows["もやし"]["hiragana"] == "もやし"
+    assert rows["もやし"]["romaji"] == "moyashi"
+    assert rows["もやし"]["translation"] == "bean sprouts"
+    assert not any(row["canonical"] == "燃やす::動詞" for row in rows.values())
+
+
 def test_dictionary_conjunction_expression_spans_particle_and_verb_tokens(tmp_path):
     dictionary_path = tmp_path / "dictionary.sqlite"
     write_dictionary(

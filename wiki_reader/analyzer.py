@@ -587,6 +587,18 @@ def analyze_sentence(
             )
             index = int(match["end_index"])
             continue
+        enumerated_noun = dictionary_enumerated_surface_noun_token(
+            tagged,
+            index,
+            translation_provider,
+            phrase_matches,
+            place_matches,
+            previous_rows=rows,
+        )
+        if enumerated_noun is not None:
+            rows.append(enumerated_noun)
+            index += 1
+            continue
         adverbial_suru_items = dictionary_adverbial_to_suru_items(
             tagged, index, translation_provider
         )
@@ -1040,6 +1052,73 @@ def fixed_expression_romaji(reading: str, items: list[object]) -> str:
     if written and romaji.endswith(written):
         return f"{romaji[:-len(written)]} {spoken}".strip()
     return romaji
+
+
+def dictionary_enumerated_surface_noun_token(
+    tagged: list[object],
+    index: int,
+    translation_provider: TranslationProvider,
+    phrase_matches: list[dict[str, Any]],
+    place_matches: list[dict[str, Any]],
+    *,
+    previous_rows: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Recover a kana noun misread as an inflected verb inside a noun list.
+
+    UniDic reads もやし in an ingredient list as the continuative form of
+    燃やす.  Requiring commas on both sides, noun list-items beyond them, and
+    an exact noun entry makes the repair useful for kana homographs without
+    reclassifying ordinary comma-linked verb clauses.
+    """
+    if index < 2 or index + 2 >= len(tagged):
+        return None
+    item = tagged[index]
+    node = item.node
+    surface = str(node.surface)
+    if (
+        str(getattr(node.feature, "pos1", "")) != "動詞"
+        or not kana_only(surface)
+        or str(tagged[index - 1].node.surface) not in {"、", ",", "，"}
+        or str(tagged[index + 1].node.surface) not in {"、", ",", "，"}
+        or not noun_list_item_edge(tagged[index - 2].node)
+        or not noun_list_item_edge(tagged[index + 2].node)
+    ):
+        return None
+    candidate = {
+        "surface": surface,
+        "pos1": "名詞",
+        "pos2": "普通名詞",
+        "canonical": f"{surface}::名詞",
+        "hiragana": katakana_to_hiragana(surface),
+        **next_node_context(next_lexical_node(tagged, index)),
+        **previous_row_context(previous_rows),
+    }
+    lookup_row = getattr(translation_provider, "lookup_row", None)
+    if not callable(lookup_row):
+        return None
+    dictionary_row = lookup_row(candidate)
+    if dictionary_row is None or "n" not in {
+        part for part in str(dictionary_row[7]).split(",") if part
+    }:
+        return None
+    hiragana = katakana_to_hiragana(str(dictionary_row[4]))
+    row = {
+        **candidate,
+        "hiragana": hiragana,
+        "romaji": kana_to_romaji(hiragana),
+        "reading_status": "dictionary",
+        "start": item.start,
+        "end": item.end,
+        "phrases": overlapping_phrases(phrase_matches, item.start, item.end),
+        "places": overlapping_places(place_matches, item.start, item.end),
+    }
+    row["translation"] = translation_provider.lookup(row)
+    return row
+
+
+def noun_list_item_edge(node: object) -> bool:
+    """Return whether a node can sit at the edge of a compound noun list item."""
+    return node_is_noun(node) or node_is_nominal_suffix(node)
 
 
 def adverbial_to_suru_token(
