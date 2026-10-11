@@ -587,6 +587,21 @@ def analyze_sentence(
             )
             index = int(match["end_index"])
             continue
+        adverbial_suru_items = dictionary_adverbial_to_suru_items(
+            tagged, index, translation_provider
+        )
+        if adverbial_suru_items is not None:
+            rows.append(
+                adverbial_to_suru_token(
+                    adverbial_suru_items,
+                    sentence,
+                    translation_provider,
+                    phrase_matches,
+                    place_matches,
+                )
+            )
+            index += len(adverbial_suru_items)
+            continue
         fixed_expression_items = dictionary_fixed_expression_items(
             tagged, index, sentence, translation_provider
         )
@@ -984,6 +999,45 @@ def fixed_expression_token(
     }
     row["translation"] = translation_provider.lookup(row)
     return row
+
+
+def adverbial_to_suru_token(
+    items: list[object],
+    sentence: str,
+    translation_provider: TranslationProvider,
+    phrase_matches: list[dict[str, Any]],
+    place_matches: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Represent an adv-to + とする predicate as one learnable expression."""
+    base = items[0].node
+    base_reading = katakana_to_hiragana(base_kana(base))
+    dictionary_surface = f"{base.surface}とする"
+    hiragana = f"{base_reading}とする"
+    base_row = {
+        "surface": str(base.surface),
+        "pos1": "副詞",
+        "pos2": str(getattr(base.feature, "pos2", "") or "*"),
+        "canonical": analyzer_canonical_token(base),
+        "hiragana": base_reading,
+    }
+    return {
+        "surface": sentence[items[0].start : items[-1].end],
+        "pos1": "表現",
+        "pos2": "固定表現",
+        "canonical": f"{dictionary_surface}::表現",
+        "hiragana": hiragana,
+        "romaji": kana_to_romaji(hiragana),
+        "reading_status": "dictionary",
+        "translation": translation_provider.lookup(base_row),
+        "start": items[0].start,
+        "end": items[-1].end,
+        "phrases": overlapping_phrases(
+            phrase_matches, items[0].start, items[-1].end
+        ),
+        "places": overlapping_places(
+            place_matches, items[0].start, items[-1].end
+        ),
+    }
 
 
 def ni_chigai_nai_items(
@@ -1511,6 +1565,48 @@ def dictionary_fixed_expression_items(
         if dictionary_fixed_expression_form(items, text, translation_provider):
             return items
     return None
+
+
+def dictionary_adverbial_to_suru_items(
+    tagged: list[object],
+    start: int,
+    translation_provider: TranslationProvider,
+) -> list[object] | None:
+    """Match dictionary adv-to forms such as どきりとした before bare とする."""
+    if start + 2 >= len(tagged):
+        return None
+    base, particle, verb = [item.node for item in tagged[start : start + 3]]
+    if str(getattr(base.feature, "pos1", "")) != "副詞":
+        return None
+    if str(particle.surface) != "と" or str(getattr(particle.feature, "pos1", "")) != "助詞":
+        return None
+    if not (
+        str(getattr(verb.feature, "pos1", "")) == "動詞"
+        and str(getattr(verb.feature, "orthBase", "")) == "する"
+    ):
+        return None
+    lookup_sense_pos = getattr(translation_provider, "lookup_sense_pos", None)
+    if not callable(lookup_sense_pos):
+        return None
+    base_reading = katakana_to_hiragana(base_kana(base))
+    base_row = {
+        "surface": str(base.surface),
+        "pos1": "副詞",
+        "pos2": str(getattr(base.feature, "pos2", "") or "*"),
+        "canonical": analyzer_canonical_token(base),
+        "hiragana": base_reading,
+    }
+    if "adv-to" not in set(lookup_sense_pos(base_row)):
+        return None
+    end = start + 3
+    while end < len(tagged):
+        node = tagged[end].node
+        if str(getattr(node.feature, "pos1", "")) != "助動詞":
+            break
+        if tagged[end - 1].end != tagged[end].start:
+            break
+        end += 1
+    return tagged[start:end]
 
 
 def dictionary_fixed_expression_form(

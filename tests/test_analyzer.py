@@ -143,6 +143,34 @@ def test_full_person_name_reading_overrides_isolated_name_guesses():
     assert all(row["surface"] not in {"菅田", "将", "暉"} for row in rows)
 
 
+def test_adv_to_predicate_is_one_expression_instead_of_bare_to_suru():
+    provider = DictionaryTranslations(
+        {
+            "どきり::副詞": dictionary_entry(
+                "どきり",
+                "どきり",
+                "being startled; getting a shock",
+                sense_pos="adv-to,adv,vs",
+            ),
+            "とする::表現": dictionary_entry(
+                "とする",
+                "とする",
+                "to try to; to regard as",
+                sense_pos="exp,vs-i",
+            ),
+        }
+    )
+
+    rows = analyze_sentence("俺は思わずどきりとした。", provider)
+    expression = next(row for row in rows if row["surface"] == "どきりとした")
+
+    assert expression["canonical"] == "どきりとする::表現"
+    assert expression["hiragana"] == "どきりとする"
+    assert expression["romaji"] == "dokiritosuru"
+    assert expression["translation"] == "being startled; getting a shock"
+    assert all(row["surface"] not in {"どきり", "とし"} for row in rows)
+
+
 def test_shared_mapping_disambiguates_productive_te_miru():
     provider = DictionaryTranslations(
         {
