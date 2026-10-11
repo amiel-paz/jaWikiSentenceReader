@@ -45,7 +45,10 @@ class SqliteDictionaryProvider:
                     """,
                     (key,),
                 ).fetchall()
-                gloss = select_gloss(rows, token)
+                contextual_token = token_with_neighbor_gloss(
+                    connection, select_columns, token
+                )
+                gloss = select_gloss(rows, contextual_token)
                 if gloss:
                     return gloss
         return ""
@@ -274,6 +277,9 @@ def contextual_gloss(rows: list[sqlite3.Row | tuple], token: dict[str, Any]) -> 
     grammatical = grammatical_context_gloss(rows, token)
     if grammatical:
         return grammatical
+    semantic = semantic_context_gloss(rows, token)
+    if semantic:
+        return semantic
     compatible = context_sense_rows(rows, token)
     if not compatible:
         return ""
@@ -295,6 +301,95 @@ def contextual_gloss(rows: list[sqlite3.Row | tuple], token: dict[str, Any]) -> 
         and sense_pos_set(row) == selected_pos
     ]
     return merge_glosses(merged)
+
+
+def token_with_neighbor_gloss(
+    connection: sqlite3.Connection,
+    select_columns: str,
+    token: dict[str, Any],
+) -> dict[str, Any]:
+    """Add a conservative dictionary gloss for the following lexical node.
+
+    This gives polysemous nouns a reusable semantic clue without baking in
+    particular Japanese words.  For example, a following word whose selected
+    gloss is ``noodle`` distinguishes the food sense of 春雨 from spring rain.
+    """
+    surface = str(token.get("next_surface", "")).strip()
+    if not surface:
+        return token
+    neighbor_rows = connection.execute(
+        f"""
+        SELECT {select_columns}
+        FROM dictionary_lookup
+        WHERE lookup_key = ?
+        """,
+        (surface,),
+    ).fetchall()
+    if not neighbor_rows:
+        return token
+    pos1 = str(token.get("next_pos1", "") or "*")
+    neighbor = {
+        "surface": surface,
+        "canonical": f"{surface}::{pos1}",
+        "hiragana": katakana_to_hiragana(surface),
+        "pos1": pos1,
+        "pos2": "*",
+    }
+    selected = select_row(neighbor_rows, neighbor)
+    if selected is None:
+        return token
+    glosses = [
+        str(value).strip()
+        for value in token.get("context_glosses", [])
+        if str(value).strip()
+    ]
+    glosses.append(str(selected[0]))
+    return {**token, "context_glosses": glosses}
+
+
+def semantic_context_gloss(
+    rows: list[sqlite3.Row | tuple], token: dict[str, Any]
+) -> str:
+    """Select a dictionary sense only when nearby semantics uniquely support it."""
+    context_words = semantic_words(
+        " ".join(
+            str(value)
+            for value in token.get("context_glosses", [])
+            if str(value).strip()
+        )
+    )
+    if not context_words:
+        return ""
+    token_headwords = exact_token_headwords(token)
+    selected = select_row(rows, token)
+    if selected is None:
+        return ""
+    candidates = [
+        row
+        for row in rows
+        if str(row[1]) == str(selected[1])
+        and str(row[2]) == str(selected[2])
+        and str(row[3]) in token_headwords
+        and normalized_dictionary_reading(str(row[4]))
+        == normalized_dictionary_reading(str(selected[4]))
+    ]
+    sense_groups: dict[int, list[sqlite3.Row | tuple]] = {}
+    for row in candidates:
+        sense_groups.setdefault(int(row[6]), []).append(row)
+    if len(sense_groups) < 2:
+        return ""
+    ranked = sorted(
+        (
+            len(semantic_words(merge_glosses(group)) & context_words),
+            -sense_index,
+            group,
+        )
+        for sense_index, group in sense_groups.items()
+    )
+    best_score, _, best_group = ranked[-1]
+    if best_score <= 0 or sum(score == best_score for score, _, _ in ranked) != 1:
+        return ""
+    return merge_glosses(best_group)
 
 
 def multi_sense_expression_gloss(
@@ -420,6 +515,16 @@ def english_words(text: str) -> set[str]:
         word
         for word in re.findall(r"[a-z]+", text.lower())
         if word not in {"a", "an", "and", "etc", "of", "or", "the", "to"}
+    }
+
+
+def semantic_words(text: str) -> set[str]:
+    """Normalize basic English number so noun/noodles can support one another."""
+    words = english_words(text)
+    return words | {
+        word[:-1]
+        for word in words
+        if len(word) > 3 and word.endswith("s") and not word.endswith("ss")
     }
 
 

@@ -373,6 +373,63 @@ def test_mimetic_senses_follow_unidic_grammar_and_nearby_semantic_context(tmp_pa
     assert sound_rows["ガラガラ"]["translation"] == "with a clatter; with a rattle"
 
 
+def test_following_noun_gloss_disambiguates_a_polysemous_noun(tmp_path):
+    dictionary_path = tmp_path / "dictionary.sqlite"
+    write_dictionary(
+        dictionary_path,
+        [
+            (
+                "春雨",
+                "JMdict",
+                "1580180",
+                "春雨",
+                "はるさめ",
+                "gentle spring rain",
+                20,
+                1,
+                "n",
+            ),
+            (
+                "春雨",
+                "JMdict",
+                "1580180",
+                "春雨",
+                "はるさめ",
+                "glass noodles; cellophane noodles; thin noodles made from bean starch",
+                20,
+                2,
+                "n",
+            ),
+            (
+                "ヌードル",
+                "JMdict",
+                "noodle",
+                "ヌードル",
+                "ヌードル",
+                "noodle",
+                0,
+                1,
+                "n",
+            ),
+        ],
+    )
+    provider = SqliteDictionaryProvider(dictionary_path)
+
+    food_rows = {
+        row["surface"]: row
+        for row in analyze_sentence("春雨ヌードルを食べる。", provider)
+    }
+    rain_rows = {
+        row["surface"]: row
+        for row in analyze_sentence("春雨が降る。", provider)
+    }
+
+    assert food_rows["春雨"]["translation"] == (
+        "glass noodles; cellophane noodles; thin noodles made from bean starch"
+    )
+    assert rain_rows["春雨"]["translation"] == "gentle spring rain"
+
+
 def test_dictionary_conjunction_expression_spans_particle_and_verb_tokens(tmp_path):
     dictionary_path = tmp_path / "dictionary.sqlite"
     write_dictionary(
