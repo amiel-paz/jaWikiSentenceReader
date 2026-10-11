@@ -861,8 +861,14 @@ def compound_token(
 ) -> dict[str, Any]:
     nodes = [item.node for item in items]
     surface = "".join(node.surface for node in nodes)
-    reading = compound_reading_fields(nodes, translation_provider) or reading_fields(nodes)
-    canonical = f"{surface}::名詞"
+    reading = (
+        dictionary_mixed_compound_reading(surface, nodes, translation_provider)
+        or compound_reading_fields(nodes, translation_provider)
+        or reading_fields(nodes)
+    )
+    canonical = dictionary_compound_canonical(
+        surface, nodes, translation_provider
+    )
     row = {
         "surface": surface,
         "pos1": "名詞",
@@ -1566,7 +1572,7 @@ def dictionary_noun_compound_items(
     candidates: list[list[object]] = []
     for end in range(start + 2, min(len(tagged), start + 5) + 1):
         items = tagged[start:end]
-        if not all(dictionary_compound_node(item.node) for item in items):
+        if not all(dictionary_compound_component_node(item.node) for item in items):
             break
         candidates.append(items)
     for items in reversed(candidates):
@@ -1627,7 +1633,77 @@ def dictionary_confirmed_compound(
     }
     if not translation_provider.lookup(row):
         return False
+    lookup_row = getattr(translation_provider, "lookup_row", None)
+    if callable(lookup_row):
+        result = lookup_row(row)
+        if result is None or str(result[3]) != surface:
+            return False
+        lookup_sense_pos = getattr(translation_provider, "lookup_sense_pos", None)
+        if callable(lookup_sense_pos) and not (
+            set(lookup_sense_pos(row)) & {"n", "n-adv", "n-pr", "n-t"}
+        ):
+            return False
+    if mixed_dictionary_compound(nodes):
+        return True
     return all(plain_token_row(node, translation_provider).get("translation") for node in nodes)
+
+
+def dictionary_compound_canonical(
+    surface: str,
+    nodes: list[object],
+    translation_provider: TranslationProvider,
+) -> str:
+    """Share an identity with a katakana spelling for dictionary-backed ateji."""
+    fallback = f"{surface}::名詞"
+    if not mixed_dictionary_compound(nodes):
+        return fallback
+    lookup_row = getattr(translation_provider, "lookup_row", None)
+    if not callable(lookup_row):
+        return fallback
+    row = {
+        "surface": surface,
+        "pos1": "名詞",
+        "pos2": compound_pos2(nodes),
+        "canonical": fallback,
+        **reading_fields(nodes),
+    }
+    result = lookup_row(row)
+    if result is None or str(result[3]) != surface:
+        return fallback
+    dictionary_reading = str(result[4])
+    if re.fullmatch(r"[ァ-ヺー]+", dictionary_reading):
+        return f"{dictionary_reading}::名詞"
+    return fallback
+
+
+def dictionary_mixed_compound_reading(
+    surface: str,
+    nodes: list[object],
+    translation_provider: TranslationProvider,
+) -> dict[str, str] | None:
+    if not mixed_dictionary_compound(nodes):
+        return None
+    lookup_row = getattr(translation_provider, "lookup_row", None)
+    if not callable(lookup_row):
+        return None
+    row = {
+        "surface": surface,
+        "pos1": "名詞",
+        "pos2": compound_pos2(nodes),
+        "canonical": f"{surface}::名詞",
+        **reading_fields(nodes),
+    }
+    result = lookup_row(row)
+    if result is None or str(result[3]) != surface:
+        return None
+    hiragana = katakana_to_hiragana(str(result[4]))
+    if not hiragana:
+        return None
+    return {
+        "hiragana": hiragana,
+        "romaji": kana_to_romaji(hiragana),
+        "reading_status": "dictionary",
+    }
 
 
 def dictionary_fixed_expression_items(
@@ -2101,6 +2177,8 @@ def inherited_compound_tokens(
         return []
     if any(node_is_numeric_noun(node) for node in nodes):
         return []
+    if mixed_dictionary_compound(nodes):
+        return []
     inherited: list[dict[str, str]] = []
     noun_nodes = [node for node in nodes if node_is_noun(node)]
     suffix_nodes = [node for node in nodes if node_is_nominal_suffix(node)]
@@ -2204,6 +2282,21 @@ def dictionary_compound_node(node) -> bool:
         node_is_common_noun(node)
         or node_is_proper_noun(node)
         or node_is_numeric_noun(node)
+    )
+
+
+def dictionary_compound_component_node(node) -> bool:
+    return dictionary_compound_node(node) or (
+        token_node_is_lexical(node)
+        and getattr(node.feature, "pos1", "") in {"形容詞", "形状詞", "接頭辞"}
+    )
+
+
+def mixed_dictionary_compound(nodes: list[object]) -> bool:
+    return any(
+        token_node_is_lexical(node)
+        and getattr(node.feature, "pos1", "") in {"形容詞", "形状詞", "接頭辞"}
+        for node in nodes
     )
 
 

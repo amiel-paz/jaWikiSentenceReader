@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 
-ANALYSIS_CACHE_VERSION = "2026-10-10-te-miru-expressions"
+ANALYSIS_CACHE_VERSION = "2026-10-10-mixed-dictionary-compounds"
 
 
 class AnalysisCache:

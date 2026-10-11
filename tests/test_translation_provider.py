@@ -607,3 +607,38 @@ def test_person_name_compound_prefers_exact_jmnedict_full_name_reading(tmp_path)
     assert rows["岸本斉史"]["inherited_tokens"] == []
     assert "岸本" not in rows
     assert "斉史" not in rows
+
+
+def test_mixed_pos_kanji_food_name_uses_exact_dictionary_token(tmp_path):
+    dictionary_path = tmp_path / "dictionary.sqlite"
+    write_dictionary(
+        dictionary_path,
+        [
+            (
+                "麻辣湯",
+                "JMdict",
+                "1",
+                "麻辣湯",
+                "マーラータン",
+                "malatang (Sichuan-style spicy street food)",
+                10,
+                1,
+                "n",
+            ),
+        ],
+    )
+
+    rows = analyze_sentence(
+        "マーラータン、つまり麻辣湯。",
+        SqliteDictionaryProvider(dictionary_path),
+    )
+    katakana = next(row for row in rows if row["surface"] == "マーラータン")
+    kanji = next(row for row in rows if row["surface"] == "麻辣湯")
+
+    assert katakana["canonical"] == "マーラータン::名詞"
+    assert kanji["canonical"] == katakana["canonical"]
+    assert kanji["hiragana"] == "まーらーたん"
+    assert kanji["romaji"] == "ma-ra-tan"
+    assert kanji["translation"] == "malatang (Sichuan-style spicy street food)"
+    assert kanji["inherited_tokens"] == []
+    assert all(row["surface"] not in {"麻", "辣", "湯"} for row in rows)
