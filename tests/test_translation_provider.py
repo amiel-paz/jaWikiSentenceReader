@@ -756,6 +756,61 @@ def test_dictionary_expression_spans_toshite_without_short_particle_noise(tmp_pa
     assert "には" not in rows
 
 
+def test_right_hand_expression_keeps_shared_connector_from_left_match(tmp_path):
+    dictionary_path = tmp_path / "dictionary.sqlite"
+    write_dictionary(
+        dictionary_path,
+        [
+            (
+                "になると",
+                "JMdict",
+                "left",
+                "になると",
+                "になると",
+                "when it becomes; when it comes to",
+                0,
+                1,
+                "exp",
+            ),
+            (
+                "とともに",
+                "JMdict",
+                "right",
+                "と共に",
+                "とともに",
+                "together with; at the same time as",
+                20,
+                1,
+                "exp",
+            ),
+            (
+                "ともに",
+                "JMdict",
+                "short-right",
+                "共に",
+                "ともに",
+                "together; jointly",
+                0,
+                1,
+                "adv",
+            ),
+        ],
+    )
+
+    rows = {
+        row["surface"]: row
+        for row in analyze_sentence(
+            "微笑ましい気持ちになるとともに笑った。",
+            SqliteDictionaryProvider(dictionary_path),
+        )
+    }
+
+    assert rows["とともに"]["canonical"] == "とともに::表現"
+    assert rows["とともに"]["translation"] == "together with; at the same time as"
+    assert "になると" not in rows
+    assert "ともに" not in rows
+
+
 def test_person_name_compound_prefers_exact_jmnedict_full_name_reading(tmp_path):
     dictionary_path = tmp_path / "dictionary.sqlite"
     write_dictionary(

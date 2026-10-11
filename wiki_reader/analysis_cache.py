@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 
-ANALYSIS_CACHE_VERSION = "2026-10-10-contextual-readings-compound-verbs"
+ANALYSIS_CACHE_VERSION = "2026-10-10-overlapping-expression-boundaries"
 
 
 class AnalysisCache:

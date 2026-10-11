@@ -1857,9 +1857,48 @@ def dictionary_fixed_expression_items(
             continue
         candidates.append(items)
     for items in reversed(candidates):
-        if dictionary_fixed_expression_form(items, text, translation_provider):
+        if dictionary_fixed_expression_form(
+            items, text, translation_provider
+        ) and not yields_to_overlapping_right_expression(
+            tagged, start, items, text, translation_provider
+        ):
             return items
     return None
+
+
+def yields_to_overlapping_right_expression(
+    tagged: list[object],
+    start: int,
+    items: list[object],
+    text: str,
+    translation_provider: TranslationProvider,
+) -> bool:
+    """Keep a final connector for a dictionary expression extending right.
+
+    In になるとともに, a greedy になると match steals the と that begins
+    とともに.  When that last node starts another confirmed expression which
+    reaches beyond the current match, prefer the right-hand expression.
+    """
+    if len(items) < 2 or not expression_connector_node(items[-1].node):
+        return False
+    right_start = start + len(items) - 1
+    current_end = start + len(items)
+    for right_end in range(
+        right_start + 2,
+        min(len(tagged), right_start + 6) + 1,
+    ):
+        if right_end <= current_end:
+            continue
+        right_items = tagged[right_start:right_end]
+        if not all(token_node_is_lexical(item.node) for item in right_items):
+            break
+        if not any(expression_connector_node(item.node) for item in right_items):
+            continue
+        if dictionary_fixed_expression_form(
+            right_items, text, translation_provider
+        ):
+            return True
+    return False
 
 
 def dictionary_adverbial_to_suru_items(
