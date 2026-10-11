@@ -133,3 +133,15 @@ def test_active_article_session_survives_reload_until_successful_end():
     assert successful_end.index("await syncAnkiSession()") < successful_end.index(
         "clearActiveSession();"
     )
+
+
+def test_end_session_confirmation_is_viewport_bounded_and_scrollable():
+    styles = (PROJECT_ROOT / "static" / "styles.css").read_text(encoding="utf-8")
+    panel_styles = styles[
+        styles.index(".confirm-panel {") : styles.index(".confirm-panel h2")
+    ]
+
+    assert "max-height: calc(100dvh - 40px);" in panel_styles
+    assert "overflow-y: auto;" in panel_styles
+    assert "overscroll-behavior: contain;" in panel_styles
+    assert "-webkit-overflow-scrolling: touch;" in panel_styles

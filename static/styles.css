@@ -534,13 +534,19 @@ h1 {
   place-items: center;
   background: rgb(128 128 128 / 48%);
   padding: 20px;
+  overflow-y: auto;
 }
 
 .confirm-panel {
   width: min(860px, 100%);
+  max-height: calc(100vh - 40px);
+  max-height: calc(100dvh - 40px);
   background: var(--paper);
   border: 1px solid var(--line);
   padding: 22px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .confirm-panel h2 {
@@ -772,6 +778,16 @@ h1 {
 }
 
 @media (max-width: 720px) {
+  .confirm {
+    padding: 12px;
+  }
+
+  .confirm-panel {
+    max-height: calc(100vh - 24px);
+    max-height: calc(100dvh - 24px);
+    padding: 16px;
+  }
+
   .topbar,
   .input-row,
   .confirm-actions,
