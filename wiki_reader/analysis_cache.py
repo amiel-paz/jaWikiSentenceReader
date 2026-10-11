@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 
-ANALYSIS_CACHE_VERSION = "2026-10-10-orthographic-expression-lemmas"
+ANALYSIS_CACHE_VERSION = "2026-10-10-contextual-person-name-readings"
 
 
 class AnalysisCache:

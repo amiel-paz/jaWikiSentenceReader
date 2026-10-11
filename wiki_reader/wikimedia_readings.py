@@ -10,13 +10,21 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from .token_utils import base_kana, get_tagger, katakana_to_hiragana, token_node_is_lexical
+from .token_utils import (
+    base_kana,
+    get_tagger,
+    kana_to_romaji,
+    katakana_to_hiragana,
+    token_node_is_lexical,
+)
 
 
 API_URL = "https://ja.wikipedia.org/w/api.php"
 USER_AGENT = "wiki-sentence-reader/0.1 (local prototype)"
 KANA_RE = re.compile(r"^[ぁ-ゖァ-ヺー・\s]+$")
-PAREN_RE = re.compile(r"([一-龯々〆ヵヶぁ-ゖァ-ヺー・]+)（([ぁ-ゖァ-ヺー・\s]+)[、）]")
+PAREN_RE = re.compile(
+    r"([一-龯々〆ヵヶぁ-ゖァ-ヺー・\s]+)（([ぁ-ゖァ-ヺー・\s]+)[、）]"
+)
 
 
 @dataclass
@@ -150,27 +158,36 @@ def extract_reading_for_term(
 ) -> dict[str, str] | None:
     title = str(page.get("title", ""))
     extract = str(page.get("extract", ""))
-    for written, reading in parenthetical_pairs(extract):
+    for written, reading, reading_parts in parenthetical_entries(extract):
         resolved = reading_for_written_prefix(term, written, reading, dictionary_path)
         if resolved is None:
             continue
-        return {
+        result = {
             "hiragana": resolved,
             "source": "jawiki",
             "source_title": title,
             "source_url": str(page.get("canonicalurl", "")),
             "source_id": str(page.get("pageprops", {}).get("wikibase_item", "")),
         }
+        if written == term and len(reading_parts) > 1:
+            result["romaji"] = " ".join(kana_to_romaji(part) for part in reading_parts)
+        return result
     return None
 
 
 def parenthetical_pairs(text: str) -> list[tuple[str, str]]:
-    pairs: list[tuple[str, str]] = []
+    return [(written, reading) for written, reading, _ in parenthetical_entries(text)]
+
+
+def parenthetical_entries(text: str) -> list[tuple[str, str, list[str]]]:
+    pairs: list[tuple[str, str, list[str]]] = []
     for match in PAREN_RE.finditer(text):
-        written = match.group(1).strip()
-        reading = re.sub(r"[\s・]", "", katakana_to_hiragana(match.group(2)))
+        written = re.sub(r"[\s・]", "", match.group(1))
+        raw_reading = katakana_to_hiragana(match.group(2)).strip()
+        reading_parts = [part for part in re.split(r"[\s・]+", raw_reading) if part]
+        reading = "".join(reading_parts)
         if written and reading and KANA_RE.fullmatch(match.group(2)):
-            pairs.append((written, reading))
+            pairs.append((written, reading, reading_parts))
     return pairs
 
 

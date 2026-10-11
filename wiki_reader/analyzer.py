@@ -892,14 +892,17 @@ def wikimedia_reading_token(
 ) -> dict[str, Any]:
     surface = str(match["surface"])
     hiragana = str(match["hiragana"])
+    nodes = [item.node for item in items]
+    person_name = full_person_name_nodes(nodes)
+    romaji = str(match.get("romaji", "")) or kana_to_romaji(hiragana)
     canonical = f"{surface}::名詞"
     row = {
         "surface": surface,
         "pos1": "名詞",
-        "pos2": "普通名詞",
+        "pos2": "固有名詞" if person_name else "普通名詞",
         "canonical": canonical,
         "hiragana": hiragana,
-        "romaji": kana_to_romaji(hiragana),
+        "romaji": romaji,
         "reading_status": "wikimedia",
         "reading_source": {
             "source": str(match.get("source", "")),
@@ -913,7 +916,11 @@ def wikimedia_reading_token(
         "places": overlapping_places(place_matches, items[0].start, items[-1].end),
     }
     apply_dictionary_reading_override(row, translation_provider)
-    row["translation"] = translation_provider.lookup(row)
+    row["translation"] = translation_provider.lookup(row) or (
+        f"{' '.join(part.capitalize() for part in romaji.split())} (person name)"
+        if person_name
+        else ""
+    )
     return row
 
 
@@ -1746,7 +1753,10 @@ def wikimedia_reading_candidates(
             items = tagged[start:end]
             if not all(reading_candidate_node(item.node) for item in items):
                 break
-            if not any(missing_node_reading(item.node) for item in items):
+            full_person_name = maximal_person_name_items(tagged, start, end)
+            if not full_person_name and not any(
+                missing_node_reading(item.node) for item in items
+            ):
                 continue
             surface = text[items[0].start : items[-1].end]
             if len(surface) < 2 or len(surface) > 12:
@@ -1758,11 +1768,37 @@ def wikimedia_reading_candidates(
                     "end": items[-1].end,
                     "start_index": start,
                     "end_index": end,
-                    "score": 100 + len(surface) + (20 if len(items) > 1 else 0),
+                    "score": (
+                        150 if full_person_name else 100
+                    ) + len(surface) + (20 if len(items) > 1 else 0),
                 }
             )
     candidates.sort(key=lambda item: (item["start"], -item["score"], -len(item["surface"])))
     return candidates
+
+
+def maximal_person_name_items(
+    tagged: list[object], start: int, end: int
+) -> bool:
+    """Identify a complete surname + given-name span, even if UniDic guessed readings."""
+    items = tagged[start:end]
+    if not full_person_name_nodes([item.node for item in items]):
+        return False
+    return end >= len(tagged) or person_name_kind(tagged[end].node) != "名"
+
+
+def full_person_name_nodes(nodes: list[object]) -> bool:
+    return (
+        len(nodes) >= 2
+        and person_name_kind(nodes[0]) == "姓"
+        and all(person_name_kind(node) == "名" for node in nodes[1:])
+    )
+
+
+def person_name_kind(node) -> str:
+    if not node_is_person_name(node):
+        return ""
+    return str(getattr(node.feature, "pos4", ""))
 
 
 def select_non_overlapping_reading_matches(

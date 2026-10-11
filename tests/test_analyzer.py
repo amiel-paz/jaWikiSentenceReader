@@ -38,6 +38,16 @@ class DictionaryTranslations(StaticTranslations):
         return set(str(entry.get("sense_pos", "")).split(",")) if entry else set()
 
 
+class StaticReadings:
+    def __init__(self, readings: dict[str, dict[str, str]]):
+        self.readings = readings
+        self.lookups: list[str] = []
+
+    def lookup(self, term: str) -> dict[str, str] | None:
+        self.lookups.append(term)
+        return self.readings.get(term)
+
+
 def dictionary_entry(
     headword: str,
     hiragana: str,
@@ -102,6 +112,35 @@ def test_shared_mapping_rejects_name_homophone_for_inflected_verb():
     assert token["canonical"] == "乗る::動詞"
     assert token["translation"] == "to board"
     assert token["vocabulary"]["source"] == "JMdict"
+
+
+def test_full_person_name_reading_overrides_isolated_name_guesses():
+    readings = StaticReadings(
+        {
+            "菅田将暉": {
+                "hiragana": "すだまさき",
+                "source": "jawiki",
+                "source_title": "菅田将暉",
+                "source_url": "https://ja.wikipedia.org/wiki/菅田将暉",
+                "source_id": "Q1322323",
+                "romaji": "suda masaki",
+            }
+        }
+    )
+
+    rows = analyze_sentence(
+        "菅田将暉って渋いの?",
+        StaticTranslations(),
+        reading_provider=readings,
+    )
+    name = next(row for row in rows if row["surface"] == "菅田将暉")
+
+    assert readings.lookups == ["菅田将暉"]
+    assert name["hiragana"] == "すだまさき"
+    assert name["romaji"] == "suda masaki"
+    assert name["translation"] == "Suda Masaki (person name)"
+    assert name["reading_status"] == "wikimedia"
+    assert all(row["surface"] not in {"菅田", "将", "暉"} for row in rows)
 
 
 def test_shared_mapping_disambiguates_productive_te_miru():
