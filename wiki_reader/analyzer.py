@@ -602,6 +602,19 @@ def analyze_sentence(
             )
             index += len(adverbial_suru_items)
             continue
+        te_miru_end = te_miru_chain_end_index(tagged, index)
+        if te_miru_end is not None:
+            rows.append(
+                te_miru_chain_token(
+                    tagged[index:te_miru_end],
+                    sentence,
+                    translation_provider,
+                    phrase_matches,
+                    place_matches,
+                )
+            )
+            index = te_miru_end
+            continue
         fixed_expression_items = dictionary_fixed_expression_items(
             tagged, index, sentence, translation_provider
         )
@@ -1230,6 +1243,76 @@ def verb_chain_token(
     apply_dictionary_reading_override(row, translation_provider)
     row["translation"] = translation_provider.lookup(row)
     return row
+
+
+def te_miru_chain_token(
+    items: list[object],
+    sentence: str,
+    translation_provider: TranslationProvider,
+    phrase_matches: list[dict[str, Any]],
+    place_matches: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Create one learnable Vてみる expression, including surface auxiliaries."""
+    base = items[0].node
+    miru_index = next(
+        index
+        for index, item in enumerate(items[1:], 1)
+        if is_auxiliary_miru(item.node)
+    )
+    prefix = sentence[items[0].start : items[miru_index].start]
+    dictionary_surface = f"{prefix}みる"
+    reading_prefix = "".join(
+        inflected_node_reading(item.node) for item in items[:miru_index]
+    )
+    hiragana = f"{reading_prefix}みる"
+    base_row = plain_token_row(base, translation_provider)
+    phrase = {
+        "surface": sentence[items[miru_index - 1].start : items[miru_index].end],
+        "canonical": "てみる::表現",
+        "translation": "to try doing; to do and see what happens",
+    }
+    return {
+        "surface": sentence[items[0].start : items[-1].end],
+        "pos1": "表現",
+        "pos2": "文法表現",
+        "canonical": f"{dictionary_surface}::表現",
+        "hiragana": hiragana,
+        "romaji": kana_to_romaji(hiragana),
+        "reading_status": "grammar",
+        "translation": te_miru_translation(str(base_row.get("translation", ""))),
+        "start": items[0].start,
+        "end": items[-1].end,
+        "phrases": [
+            *overlapping_phrases(
+                phrase_matches, items[0].start, items[-1].end
+            ),
+            phrase,
+        ],
+        "places": overlapping_places(
+            place_matches, items[0].start, items[-1].end
+        ),
+    }
+
+
+def te_miru_translation(base_translation: str) -> str:
+    clauses = [part.strip() for part in base_translation.split(";") if part.strip()]
+    attempts = [
+        f"to try to {clause[3:]}" if clause.startswith("to ") else clause
+        for clause in clauses
+    ]
+    if attempts:
+        return "; ".join(attempts)
+    return "to try doing; to do and see what happens"
+
+
+def inflected_node_reading(node) -> str:
+    reading = (
+        getattr(node.feature, "kana", "")
+        or getattr(node.feature, "pron", "")
+        or getattr(node.feature, "form", "")
+        or base_kana(node)
+    )
+    return katakana_to_hiragana(str(reading))
 
 
 def verb_chain_canonical(base) -> str:
@@ -1940,6 +2023,46 @@ def te_iru_chain_end_index(tagged: list[object], start: int) -> int | None:
     if getattr(iru.feature, "pos2", "") != "非自立可能":
         return None
     return index + 2
+
+
+def te_miru_chain_end_index(tagged: list[object], start: int) -> int | None:
+    if not node_is_verb(tagged[start].node):
+        return None
+    index = start + 1
+    while index < len(tagged) and getattr(tagged[index].node.feature, "pos1", "") == "助動詞":
+        index += 1
+    if index + 1 >= len(tagged):
+        return None
+    connector = tagged[index].node
+    if str(connector.surface) not in {"て", "で"}:
+        return None
+    if str(getattr(connector.feature, "pos1", "")) != "助詞":
+        return None
+    if not is_auxiliary_miru(tagged[index + 1].node):
+        return None
+    end = index + 2
+    while end < len(tagged):
+        node = tagged[end].node
+        if str(getattr(node.feature, "pos1", "")) != "助動詞":
+            break
+        if tagged[end - 1].end != tagged[end].start:
+            break
+        end += 1
+    if any(
+        left.end != right.start
+        for left, right in zip(tagged[start:end], tagged[start + 1 : end])
+    ):
+        return None
+    return end
+
+
+def is_auxiliary_miru(node) -> bool:
+    return (
+        str(getattr(node.feature, "pos1", "")) == "動詞"
+        and str(getattr(node.feature, "pos2", "")) == "非自立可能"
+        and str(getattr(node.feature, "lemma", "")) == "見る"
+        and str(getattr(node.feature, "orthBase", "")) == "みる"
+    )
 
 
 def reading_fields(nodes: list[object]) -> dict[str, str]:

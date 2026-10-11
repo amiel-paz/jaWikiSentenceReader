@@ -171,6 +171,50 @@ def test_adv_to_predicate_is_one_expression_instead_of_bare_to_suru():
     assert all(row["surface"] not in {"どきり", "とし"} for row in rows)
 
 
+def test_te_miru_is_one_productive_grammar_expression():
+    provider = DictionaryTranslations(
+        {
+            "調べる::動詞": dictionary_entry(
+                "調べる",
+                "しらべる",
+                "to examine; to look up; to investigate",
+            ),
+        }
+    )
+
+    rows = analyze_sentence("気になって調べてみる。", provider)
+    expression = next(row for row in rows if row["surface"] == "調べてみる")
+
+    assert expression["canonical"] == "調べてみる::表現"
+    assert expression["hiragana"] == "しらべてみる"
+    assert expression["romaji"] == "shirabetemiru"
+    assert expression["translation"] == (
+        "to try to examine; to try to look up; to try to investigate"
+    )
+    assert expression["phrases"][-1] == {
+        "surface": "てみる",
+        "canonical": "てみる::表現",
+        "translation": "to try doing; to do and see what happens",
+    }
+    assert all(row["surface"] not in {"調べ", "みる"} for row in rows)
+
+
+def test_te_miru_token_keeps_inflected_surface_but_dictionary_form_reading():
+    provider = DictionaryTranslations(
+        {
+            "読む::動詞": dictionary_entry("読む", "よむ", "to read"),
+        }
+    )
+
+    rows = analyze_sentence("読んでみた。", provider)
+    expression = next(row for row in rows if row["surface"] == "読んでみた")
+
+    assert expression["canonical"] == "読んでみる::表現"
+    assert expression["hiragana"] == "よんでみる"
+    assert expression["romaji"] == "yondemiru"
+    assert expression["translation"] == "to try to read"
+
+
 def test_shared_mapping_disambiguates_productive_te_miru():
     provider = DictionaryTranslations(
         {
@@ -181,10 +225,11 @@ def test_shared_mapping_disambiguates_productive_te_miru():
         }
     )
 
-    token = cached_rows("のぞいてみる。", provider)["のぞいて"]
+    token = cached_rows("のぞいてみる。", provider)["のぞいてみる"]
 
-    assert token["canonical"] == "覗く::動詞"
-    assert token["translation"] == "to peek"
+    assert token["canonical"] == "のぞいてみる::表現"
+    assert token["translation"] == "to try to peek"
+    assert token["vocabulary"]["source"] == "Local grammar"
 
 
 def test_shared_mapping_exposes_dictionary_backed_nominal_suffix():
