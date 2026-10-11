@@ -409,6 +409,43 @@ def vocabulary_mapping(
             "translation": str(token["translation"]),
             "mapping_status": "local",
         }
+    if (
+        str(token.get("pos1", "")) == "動詞"
+        and str(token.get("pos2", "")) == "サ変・をする"
+        and lemma.endswith("をする")
+    ):
+        noun_headword = lemma[: -len("をする")]
+        hiragana = str(token.get("hiragana", ""))
+        noun_hiragana = (
+            hiragana[: -len("をする")] if hiragana.endswith("をする") else ""
+        )
+        noun_token = {
+            "surface": noun_headword,
+            "canonical": f"{noun_headword}::名詞",
+            "pos1": "名詞",
+            "pos2": "普通名詞",
+            "hiragana": noun_hiragana,
+        }
+        lookup = getattr(translation_provider, "lookup_entry", None)
+        noun_entry = lookup(noun_token) if callable(lookup) else None
+        if noun_entry:
+            source = str(noun_entry.get("source", ""))
+            entry_id = str(noun_entry.get("entry_id", ""))
+            return {
+                "token_id": canonical,
+                "dictionary_id": f"{source}:{entry_id}",
+                "source": source,
+                "headword": lemma,
+                "hiragana": hiragana,
+                "romaji": str(
+                    token.get("romaji", "") or kana_to_romaji(hiragana)
+                ),
+                "translation": str(
+                    token.get("translation")
+                    or noun_entry.get("translation", "")
+                ),
+                "mapping_status": "dictionary",
+            }
     lookup = getattr(translation_provider, "lookup_entry", None)
     entry = lookup(token) if callable(lookup) else None
     if entry:
@@ -586,6 +623,21 @@ def analyze_sentence(
                 )
             )
             index = int(match["end_index"])
+            continue
+        sahen_wo_suru_items = dictionary_sahen_wo_suru_items(
+            tagged, index, translation_provider
+        )
+        if sahen_wo_suru_items is not None:
+            rows.append(
+                sahen_wo_suru_token(
+                    sahen_wo_suru_items,
+                    sentence,
+                    translation_provider,
+                    phrase_matches,
+                    place_matches,
+                )
+            )
+            index += len(sahen_wo_suru_items)
             continue
         enumerated_noun = dictionary_enumerated_surface_noun_token(
             tagged,
@@ -1341,6 +1393,81 @@ def tsumeru_grilling_token(
         "places": overlapping_places(
             place_matches, items[0].start, items[-1].end
         ),
+    }
+
+
+def dictionary_sahen_wo_suru_items(
+    tagged: list[object],
+    start: int,
+    translation_provider: TranslationProvider,
+) -> list[object] | None:
+    """Match a dictionary-confirmed verbal noun used as Nをする.
+
+    This keeps useful collocations such as 工夫をしている together while
+    refusing ordinary noun objects whose dictionary entry is not a する verb.
+    """
+    if start + 2 >= len(tagged):
+        return None
+    noun, particle, verb = [item.node for item in tagged[start : start + 3]]
+    if not (
+        node_is_sahen_noun(noun)
+        and str(particle.surface) == "を"
+        and str(getattr(particle.feature, "pos1", "")) == "助詞"
+        and suru_stem_node(verb)
+    ):
+        return None
+    noun_row = plain_token_row(noun, translation_provider)
+    lookup_sense_pos = getattr(translation_provider, "lookup_sense_pos", None)
+    if not callable(lookup_sense_pos) or "vs" not in set(
+        lookup_sense_pos(noun_row)
+    ):
+        return None
+
+    verb_start = start + 2
+    end = verb_start + 1
+    te_iru_end = te_iru_chain_end_index(tagged, verb_start)
+    if te_iru_end is not None:
+        end = te_iru_end
+    else:
+        while end < len(tagged) and str(
+            getattr(tagged[end].node.feature, "pos1", "")
+        ) == "助動詞":
+            end += 1
+        if end < len(tagged) and str(tagged[end].node.surface) in {"て", "で"}:
+            end += 1
+    return tagged[start:end]
+
+
+def sahen_wo_suru_token(
+    items: list[object],
+    sentence: str,
+    translation_provider: TranslationProvider,
+    phrase_matches: list[dict[str, Any]],
+    place_matches: list[dict[str, Any]],
+) -> dict[str, Any]:
+    noun = items[0].node
+    noun_row = plain_token_row(noun, translation_provider)
+    noun_surface = str(noun.surface)
+    noun_reading = str(noun_row.get("hiragana", ""))
+    hiragana = f"{noun_reading}をする" if noun_reading else ""
+    romaji = f"{kana_to_romaji(noun_reading)} o suru" if noun_reading else ""
+    return {
+        "surface": sentence[items[0].start : items[-1].end],
+        "pos1": "動詞",
+        "pos2": "サ変・をする",
+        "canonical": f"{noun_surface}をする::動詞",
+        "hiragana": hiragana,
+        "romaji": romaji,
+        "reading_status": "dictionary" if hiragana else "missing",
+        "start": items[0].start,
+        "end": items[-1].end,
+        "phrases": overlapping_phrases(
+            phrase_matches, items[0].start, items[-1].end
+        ),
+        "places": overlapping_places(
+            place_matches, items[0].start, items[-1].end
+        ),
+        "translation": str(noun_row.get("translation", "")),
     }
 
 

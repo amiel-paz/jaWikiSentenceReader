@@ -746,6 +746,54 @@ def test_dictionary_compound_verb_spans_adjacent_verb_nodes(tmp_path):
     assert "抜く" not in rows
 
 
+def test_dictionary_sahen_noun_and_wo_suru_form_one_learnable_token(tmp_path):
+    dictionary_path = tmp_path / "dictionary.sqlite"
+    write_dictionary(
+        dictionary_path,
+        [
+            (
+                "工夫",
+                "JMdict",
+                "1267500",
+                "工夫",
+                "くふう",
+                "devising (a way); contriving; inventing; thinking up",
+                20,
+                1,
+                "n,vs,vt",
+            ),
+        ],
+    )
+    provider = SqliteDictionaryProvider(dictionary_path)
+
+    result = analyze_sentence_with_cache(
+        "日々を生き抜くための工夫をしている。",
+        translation_provider=provider,
+    )
+    rows = {row["surface"]: row for row in result["tokens"]}
+
+    expression = rows["工夫をしている"]
+    assert expression["canonical"] == "工夫をする::動詞"
+    assert expression["hiragana"] == "くふうをする"
+    assert expression["romaji"] == "kufuu o suru"
+    assert expression["translation"] == (
+        "devising (a way); contriving; inventing; thinking up"
+    )
+    assert expression["vocabulary"] == {
+        "token_id": "工夫をする::動詞",
+        "dictionary_id": "JMdict:1267500",
+        "source": "JMdict",
+        "headword": "工夫をする",
+        "hiragana": "くふうをする",
+        "romaji": "kufuu o suru",
+        "translation": "devising (a way); contriving; inventing; thinking up",
+        "mapping_status": "dictionary",
+    }
+    assert "工夫" not in rows
+    assert "をして" not in rows
+    assert "いる" not in rows
+
+
 def test_dictionary_expression_spans_toshite_without_short_particle_noise(tmp_path):
     dictionary_path = tmp_path / "dictionary.sqlite"
     write_dictionary(
