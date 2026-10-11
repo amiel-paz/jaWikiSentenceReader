@@ -54,6 +54,8 @@ def test_persistent_vocabulary_summary_matches_roleplay_sorting_controls():
     assert "Most unrecognized" in markup
     assert "Best difference" in markup
     assert 'fetch("/api/summary", options)' in script
+    assert 'scope: "session"' in script
+    assert "in this reading session" in script
     assert "right.difference - left.difference" in script
 
 

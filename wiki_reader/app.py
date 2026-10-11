@@ -15,7 +15,12 @@ from .analysis_cache import AnalysisCache
 from .analyzer import analyze_article, analyze_sentence_with_cache
 from .anki_cards import build_anki_tsv
 from .anki_connect import AnkiConnectError, anki_status, sync_anki_cards
-from .anki_sync_log import AnkiSyncLog, validate_session_id
+from .anki_sync_log import (
+    AnkiSyncLog,
+    aggregate_vocabulary_summary,
+    summary_card_record,
+    validate_session_id,
+)
 from .private_articles import is_private_article_input, load_private_article
 from .sentence_aids import (
     SentenceAidError,
@@ -276,21 +281,44 @@ def create_app() -> Flask:
     def vocabulary_summary():
         payload = request.get_json(silent=True) or {}
         cards = payload.get("cards") if isinstance(payload, dict) else None
+        scope = str(payload.get("scope", "history")) if isinstance(payload, dict) else "history"
         session_id = str(payload.get("session_id", "")) if cards is not None else ""
+        if scope not in {"history", "session"}:
+            return jsonify({"error": "scope must be history or session"}), 400
         if cards is not None and not isinstance(cards, list):
             return jsonify({"error": "cards must be a list"}), 400
         if cards is not None and any(not isinstance(card, dict) for card in cards):
             return jsonify({"error": "cards must contain objects"}), 400
         try:
-            sync_log = AnkiSyncLog(base_dir / "data" / "anki_sync.sqlite")
-            summary = sync_log.vocabulary_summary(
-                current_session_id=session_id or None,
-                current_cards=cards,
-            )
+            if scope == "session":
+                current_session_id = validate_session_id(session_id)
+                current_cards = cards or []
+                summary = aggregate_vocabulary_summary(
+                    [
+                        summary_card_record(current_session_id, card)
+                        for card in current_cards
+                    ]
+                )
+            else:
+                sync_log = AnkiSyncLog(base_dir / "data" / "anki_sync.sqlite")
+                summary = sync_log.vocabulary_summary(
+                    current_session_id=session_id or None,
+                    current_cards=cards,
+                )
             with ALWAYS_RECOGNIZED_LOCK:
                 always_tokens = AlwaysRecognizedStore(
                     base_dir / "data" / "always_recognized.json"
                 ).tokens()
+            if scope == "session":
+                current_ids = {
+                    str(card.get("canonical", "")).strip()
+                    for card in (cards or [])
+                }
+                always_tokens = [
+                    token
+                    for token in always_tokens
+                    if str(token.get("canonical", "")).strip() in current_ids
+                ]
             summary = merge_always_recognized_summary(summary, always_tokens)
         except ValueError as error:
             return jsonify({"error": str(error)}), 400

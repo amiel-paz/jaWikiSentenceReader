@@ -253,6 +253,47 @@ def test_summary_includes_saved_cards_and_current_unsynced_state(monkeypatch):
     assert payload["tokens"][0]["difference"] == 2
 
 
+def test_session_summary_excludes_counts_from_other_saved_sessions(monkeypatch):
+    memory_log = install_memory_sync_log(monkeypatch)
+    older_session = "session-older-1234"
+    current_session = "session-current-12"
+    older = sample_card(
+        expression="ギリギリ",
+        canonical="ギリギリ::副詞",
+        recognized_count=0,
+        unrecognized_count=2,
+    )
+    memory_log.summaries[older_session] = {older["canonical"]: older}
+    current = {
+        **older,
+        "unrecognized_count": 1,
+        "article_title": "今日も彼女たちがご機嫌な理由",
+    }
+    client = app_module.create_app().test_client()
+
+    response = client.post(
+        "/api/summary",
+        json={
+            "session_id": current_session,
+            "cards": [current],
+            "scope": "session",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["session_count"] == 1
+    assert payload["tokens"][0]["recognized_count"] == 0
+    assert payload["tokens"][0]["unrecognized_count"] == 1
+    assert payload["tokens"][0]["sessions"] == [
+        {
+            "session_id": current_session,
+            "article_title": "今日も彼女たちがご機嫌な理由",
+            "source_url": "",
+        }
+    ]
+
+
 def test_easy_card_is_saved_for_summary_but_never_sent_to_anki(monkeypatch):
     memory_log = install_memory_sync_log(monkeypatch)
     calls = []

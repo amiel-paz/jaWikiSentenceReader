@@ -249,6 +249,7 @@ async function openSummary() {
           body: JSON.stringify({
             session_id: state.sessionId,
             cards: ankiSyncPlan().summaryCards,
+            scope: "session",
           }),
         }
       : {};
@@ -295,7 +296,7 @@ function renderVocabularySummary() {
   });
 
   const meta = document.querySelector("#vocabulary-summary-meta");
-  meta.textContent = `${state.summary.token_count} tracked token${state.summary.token_count === 1 ? "" : "s"} across ${state.summary.session_count} reading session${state.summary.session_count === 1 ? "" : "s"}`;
+  meta.textContent = `${state.summary.token_count} tracked token${state.summary.token_count === 1 ? "" : "s"} in this reading session`;
   const list = document.querySelector("#vocabulary-summary-list");
   list.replaceChildren();
   if (!values.length) {
