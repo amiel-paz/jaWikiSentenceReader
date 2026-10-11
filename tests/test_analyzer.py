@@ -247,6 +247,23 @@ def test_shared_mapping_exposes_dictionary_backed_nominal_suffix():
     assert inherited["派::名詞"]["vocabulary"]["token_id"] == "派::名詞"
 
 
+def test_compound_does_not_inherit_an_untranslated_tokenizer_fragment():
+    provider = DictionaryTranslations(
+        {
+            "青梗菜::名詞": dictionary_entry(
+                "青梗菜", "ちんげんさい", "bok choy"
+            ),
+            "菜::名詞": dictionary_entry("菜", "な", "greens; vegetables"),
+        }
+    )
+
+    token = cached_rows("青梗菜。", provider)["青梗菜"]
+    inherited = {item["canonical"]: item for item in token["inherited_tokens"]}
+
+    assert "青梗::名詞" not in inherited
+    assert inherited["菜::名詞"]["translation"] == "greens; vegetables"
+
+
 def test_heading_text_is_analyzed_and_marked_with_ranges():
     article = {
         "title": "test",

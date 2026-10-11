@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 
-ANALYSIS_CACHE_VERSION = "2026-10-10-enumerated-kana-nouns"
+ANALYSIS_CACHE_VERSION = "2026-10-10-learnable-inherited-tokens"
 
 
 class AnalysisCache:

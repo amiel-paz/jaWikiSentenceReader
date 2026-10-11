@@ -2296,6 +2296,8 @@ def inherited_compound_tokens(
                 row["hiragana"] = reading
                 row["romaji"] = kana_to_romaji(reading)
                 row["reading_status"] = "dictionary"
+        if not learnable_inherited_token(row):
+            continue
         inherited.append(
             {
                 "surface": str(row["surface"]),
@@ -2312,6 +2314,14 @@ def inherited_compound_tokens(
         if suffix_token is not None:
             inherited.append(suffix_token)
     return inherited
+
+
+def learnable_inherited_token(row: Mapping[str, Any]) -> bool:
+    """Keep compound inheritance from creating unusable fragment cards."""
+    return all(
+        str(row.get(field, "")).strip()
+        for field in ("canonical", "hiragana", "romaji", "translation")
+    )
 
 
 def retokenized_single_noun(
