@@ -1003,13 +1003,14 @@ def fixed_expression_token(
         dictionary_surface, translation_provider
     )
     pos1 = "副詞" if dictionary_pos == "副詞" else "表現"
+    romaji = fixed_expression_romaji(reading, items)
     row = {
         "surface": surface,
         "pos1": pos1,
         "pos2": "複合副詞" if pos1 == "副詞" else "固定表現",
         "canonical": f"{dictionary_surface}::{pos1}",
         "hiragana": reading,
-        "romaji": kana_to_romaji(reading),
+        "romaji": romaji,
         "reading_status": "dictionary" if reading else "missing",
         "start": items[0].start,
         "end": items[-1].end,
@@ -1018,6 +1019,27 @@ def fixed_expression_token(
     }
     row["translation"] = translation_provider.lookup(row)
     return row
+
+
+def fixed_expression_romaji(reading: str, items: list[object]) -> str:
+    """Romanize a fixed expression while preserving pronounced particles.
+
+    Dictionary readings spell topic は as は, but learners need its spoken
+    form in expressions such as 要は (you wa).  Keep this narrow: only adjust
+    a trailing node that UniDic itself identifies as a particle.
+    """
+    romaji = kana_to_romaji(reading)
+    if not items:
+        return romaji
+    final_node = items[-1].node
+    if str(getattr(final_node.feature, "pos1", "")) != "助詞":
+        return romaji
+    surface = str(final_node.surface)
+    spoken_suffixes = {"は": ("ha", "wa"), "へ": ("he", "e"), "を": ("wo", "o")}
+    written, spoken = spoken_suffixes.get(surface, ("", ""))
+    if written and romaji.endswith(written):
+        return f"{romaji[:-len(written)]} {spoken}".strip()
+    return romaji
 
 
 def adverbial_to_suru_token(
@@ -1839,7 +1861,11 @@ def dictionary_fixed_expression_pos(
         return "表現"
     if "exp" in sense_pos and len(surface) >= 3:
         return "表現"
-    if len(surface) >= 3 and sense_pos & {"adv", "adv-to"}:
+    # Exact dictionary-backed adverbial expressions can be only two written
+    # characters long (notably 要は).  The caller already requires multiple
+    # tokenizer nodes and a grammatical connector, which keeps ordinary
+    # two-character lexical words out of this path.
+    if len(surface) >= 2 and sense_pos & {"adv", "adv-to"}:
         return "副詞"
     return ""
 

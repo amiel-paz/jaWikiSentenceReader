@@ -527,6 +527,43 @@ def test_dictionary_multiword_adverb_repairs_unidic_adverb_particle_split(tmp_pa
     assert "いえ" not in rows
 
 
+def test_short_dictionary_adverb_spans_topic_particle_and_uses_spoken_romaji(tmp_path):
+    dictionary_path = tmp_path / "dictionary.sqlite"
+    write_dictionary(
+        dictionary_path,
+        [
+            (
+                "要は",
+                "JMdict",
+                "1914670",
+                "要は",
+                "ようは",
+                "in short; the point is; the important thing is; in a word",
+                0,
+                1,
+                "adv",
+            ),
+            ("要", "JMdict", "wrong-sense", "要", "かなめ", "pivot", 0, 1, "n"),
+        ],
+    )
+
+    rows = {
+        row["surface"]: row
+        for row in analyze_sentence(
+            "要は麻辣スープということだ。",
+            SqliteDictionaryProvider(dictionary_path),
+        )
+    }
+
+    assert rows["要は"]["canonical"] == "要は::副詞"
+    assert rows["要は"]["hiragana"] == "ようは"
+    assert rows["要は"]["romaji"] == "you wa"
+    assert rows["要は"]["translation"] == (
+        "in short; the point is; the important thing is; in a word"
+    )
+    assert "要" not in rows
+
+
 def test_dictionary_expression_spans_toshite_without_short_particle_noise(tmp_path):
     dictionary_path = tmp_path / "dictionary.sqlite"
     write_dictionary(
