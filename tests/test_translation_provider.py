@@ -1,6 +1,6 @@
 import sqlite3
 
-from wiki_reader.analyzer import analyze_sentence
+from wiki_reader.analyzer import analyze_sentence, analyze_sentence_with_cache
 from wiki_reader.translation_provider import SqliteDictionaryProvider
 
 
@@ -646,6 +646,69 @@ def test_short_dictionary_adverb_spans_topic_particle_and_uses_spoken_romaji(tmp
         "in short; the point is; the important thing is; in a word"
     )
     assert "要" not in rows
+
+
+def test_context_resolves_karada_and_dictionary_compound_verb(tmp_path):
+    dictionary_path = tmp_path / "dictionary.sqlite"
+    write_dictionary(
+        dictionary_path,
+        [
+            (
+                "身体",
+                "JMdict",
+                "formal-body",
+                "身体",
+                "しんたい",
+                "body; physical system; the person",
+                0,
+                1,
+                "n",
+            ),
+            (
+                "身体",
+                "JMdict",
+                "everyday-body",
+                "身体",
+                "からだ",
+                "body; health; constitution",
+                0,
+                1,
+                "n",
+            ),
+            (
+                "心惹かれる",
+                "JMdict",
+                "2402830",
+                "心惹かれる",
+                "こころひかれる",
+                "to feel attracted by; to be fascinated by",
+                20,
+                1,
+                "v1",
+            ),
+        ],
+    )
+    provider = SqliteDictionaryProvider(dictionary_path)
+
+    result = analyze_sentence_with_cache(
+        "身体に良さそうで心惹かれる。",
+        translation_provider=provider,
+    )
+    rows = {row["surface"]: row for row in result["tokens"]}
+
+    body = rows["身体"]
+    assert body["hiragana"] == "からだ"
+    assert body["romaji"] == "karada"
+    assert body["reading_status"] == "contextual"
+    assert body["vocabulary"]["hiragana"] == "からだ"
+
+    expression = rows["心惹かれる"]
+    assert expression["canonical"] == "心惹かれる::動詞"
+    assert expression["hiragana"] == "こころひかれる"
+    assert expression["romaji"] == "kokorohikareru"
+    assert expression["translation"] == "to feel attracted by; to be fascinated by"
+    assert "心" not in rows
+    assert "惹か" not in rows
 
 
 def test_dictionary_expression_spans_toshite_without_short_particle_noise(tmp_path):

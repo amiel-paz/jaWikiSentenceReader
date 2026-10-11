@@ -753,6 +753,7 @@ def analyze_sentence(
                 place_matches,
                 next_node=next_lexical_node(tagged, index),
                 previous_rows=rows,
+                reading_override=contextual_token_reading(tagged, index),
             )
         )
         index += 1
@@ -841,9 +842,18 @@ def token_row(
     place_matches: list[dict[str, Any]],
     next_node: object | None = None,
     previous_rows: list[dict[str, Any]] | None = None,
+    reading_override: str = "",
 ) -> dict[str, Any]:
     node = item.node
-    reading = reading_fields([node])
+    reading = (
+        {
+            "hiragana": reading_override,
+            "romaji": kana_to_romaji(reading_override),
+            "reading_status": "contextual",
+        }
+        if reading_override
+        else reading_fields([node])
+    )
     pos1 = getattr(node.feature, "pos1", "") or "*"
     pos2 = getattr(node.feature, "pos2", "") or "*"
     canonical = analyzer_canonical_token(node)
@@ -860,9 +870,31 @@ def token_row(
         **next_node_context(next_node),
         **previous_row_context(previous_rows),
     }
-    apply_dictionary_reading_override(row, translation_provider)
+    if not reading_override:
+        apply_dictionary_reading_override(row, translation_provider)
     row["translation"] = grammar_token_translation(row) or translation_provider.lookup(row)
     return row
+
+
+def contextual_token_reading(tagged: list[object], index: int) -> str:
+    """Resolve a small set of established readings from their construction.
+
+    身体 is normally からだ in the everyday health collocations 身体に良い and
+    身体に悪い, while しんたい remains available elsewhere for formal senses.
+    UniDic cannot infer that distinction from the spelling alone.
+    """
+    if index + 2 >= len(tagged) or str(tagged[index].node.surface) != "身体":
+        return ""
+    particle = tagged[index + 1].node
+    predicate = tagged[index + 2].node
+    predicate_base = str(
+        getattr(predicate.feature, "orthBase", "")
+        or getattr(predicate.feature, "lemma", "")
+        or predicate.surface
+    )
+    if str(particle.surface) == "に" and predicate_base in {"良い", "悪い"}:
+        return "からだ"
+    return ""
 
 
 def compound_token(
@@ -1014,12 +1046,15 @@ def fixed_expression_token(
     dictionary_pos = dictionary_fixed_expression_pos(
         dictionary_surface, translation_provider
     )
-    pos1 = "副詞" if dictionary_pos == "副詞" else "表現"
+    pos1 = dictionary_pos if dictionary_pos in {"副詞", "動詞"} else "表現"
     romaji = fixed_expression_romaji(reading, items)
     row = {
         "surface": surface,
         "pos1": pos1,
-        "pos2": "複合副詞" if pos1 == "副詞" else "固定表現",
+        "pos2": {
+            "副詞": "複合副詞",
+            "動詞": "複合動詞",
+        }.get(pos1, "固定表現"),
         "canonical": f"{dictionary_surface}::{pos1}",
         "hiragana": reading,
         "romaji": romaji,
@@ -1940,6 +1975,8 @@ def dictionary_fixed_expression_pos(
         return "表現"
     if "exp" in sense_pos and len(surface) >= 3:
         return "表現"
+    if len(surface) >= 3 and any(part.startswith("v") for part in sense_pos):
+        return "動詞"
     # Exact dictionary-backed adverbial expressions can be only two written
     # characters long (notably 要は).  The caller already requires multiple
     # tokenizer nodes and a grammatical connector, which keeps ordinary

@@ -250,6 +250,7 @@ def select_row(
         priority = int(row[5])
         exact_headword = headword in token_headwords
         exact_reading = reading in {hiragana, katakana}
+        contextual_reading = str(token.get("reading_status", "")) == "contextual"
         romanized_echo = (
             exact_headword
             and source == "JMnedict"
@@ -258,6 +259,7 @@ def select_row(
         )
         return (
             0 if exact_headword else 1,
+            0 if contextual_reading and exact_reading else 1,
             1 if romanized_echo else 0,
             0 if pos2 != "固有名詞" and source == "JMdict" else 1,
             priority,
