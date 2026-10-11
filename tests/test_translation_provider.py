@@ -711,6 +711,41 @@ def test_context_resolves_karada_and_dictionary_compound_verb(tmp_path):
     assert "惹か" not in rows
 
 
+def test_dictionary_compound_verb_spans_adjacent_verb_nodes(tmp_path):
+    dictionary_path = tmp_path / "dictionary.sqlite"
+    write_dictionary(
+        dictionary_path,
+        [
+            (
+                "生き抜く",
+                "JMdict",
+                "1851550",
+                "生き抜く",
+                "いきぬく",
+                "to live through; to survive",
+                20,
+                1,
+                "v5k,vi",
+            ),
+        ],
+    )
+    provider = SqliteDictionaryProvider(dictionary_path)
+
+    result = analyze_sentence_with_cache(
+        "日々を生き抜くための工夫だ。",
+        translation_provider=provider,
+    )
+    rows = {row["surface"]: row for row in result["tokens"]}
+
+    compound = rows["生き抜く"]
+    assert compound["canonical"] == "生き抜く::動詞"
+    assert compound["hiragana"] == "いきぬく"
+    assert compound["romaji"] == "ikinuku"
+    assert compound["translation"] == "to live through; to survive"
+    assert "生き" not in rows
+    assert "抜く" not in rows
+
+
 def test_dictionary_expression_spans_toshite_without_short_particle_noise(tmp_path):
     dictionary_path = tmp_path / "dictionary.sqlite"
     write_dictionary(

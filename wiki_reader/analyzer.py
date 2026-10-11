@@ -627,6 +627,21 @@ def analyze_sentence(
             )
             index = te_miru_end
             continue
+        compound_verb_items = dictionary_compound_verb_items(
+            tagged, index, sentence, translation_provider
+        )
+        if compound_verb_items is not None:
+            rows.append(
+                fixed_expression_token(
+                    compound_verb_items,
+                    sentence,
+                    translation_provider,
+                    phrase_matches,
+                    place_matches,
+                )
+            )
+            index += len(compound_verb_items)
+            continue
         fixed_expression_items = dictionary_fixed_expression_items(
             tagged, index, sentence, translation_provider
         )
@@ -1861,6 +1876,46 @@ def dictionary_fixed_expression_items(
             items, text, translation_provider
         ) and not yields_to_overlapping_right_expression(
             tagged, start, items, text, translation_provider
+        ):
+            return items
+    return None
+
+
+def dictionary_compound_verb_items(
+    tagged: list[object],
+    start: int,
+    text: str,
+    translation_provider: TranslationProvider,
+) -> list[object] | None:
+    """Join adjacent verb nodes when the dictionary confirms one compound verb.
+
+    UniDic can split a lexical compound such as 生き抜く into 生き + 抜く.
+    Requiring an exact dictionary-backed verb prevents ordinary sequences of
+    independently meaningful verbs from being merged speculatively.
+    """
+    if str(getattr(tagged[start].node.feature, "pos1", "")) != "動詞":
+        return None
+    candidates: list[list[object]] = []
+    for end in range(start + 2, min(len(tagged), start + 4) + 1):
+        items = tagged[start:end]
+        if not all(
+            str(getattr(item.node.feature, "pos1", "")) == "動詞"
+            for item in items
+        ):
+            break
+        if any(left.end != right.start for left, right in zip(items, items[1:])):
+            break
+        candidates.append(items)
+    for items in reversed(candidates):
+        dictionary_surface = dictionary_fixed_expression_form(
+            items, text, translation_provider
+        )
+        if (
+            dictionary_surface
+            and dictionary_fixed_expression_pos(
+                dictionary_surface, translation_provider
+            )
+            == "動詞"
         ):
             return items
     return None
