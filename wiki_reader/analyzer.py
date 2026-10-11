@@ -322,6 +322,8 @@ def dictionary_nominal_suffix_items(
     nodes = [node for node in get_tagger()(surface) if token_node_is_lexical(node)]
     if len(nodes) < 2 or "".join(str(node.surface) for node in nodes) != surface:
         return []
+    if any(node_is_numeric_noun(node) for node in nodes):
+        return []
     try:
         row_start = int(row.get("start", 0))
     except (TypeError, ValueError):
@@ -2659,9 +2661,13 @@ def dictionary_compound_node(node) -> bool:
 
 
 def dictionary_compound_component_node(node) -> bool:
-    return dictionary_compound_node(node) or (
+    return (
+        dictionary_compound_node(node)
+        or (node_is_nominal_suffix(node) and not phrase_only_nominal_suffix(node))
+        or (
         token_node_is_lexical(node)
         and getattr(node.feature, "pos1", "") in {"形容詞", "形状詞", "接頭辞"}
+        )
     )
 
 

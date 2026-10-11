@@ -501,6 +501,36 @@ def test_dictionary_confirmed_numeric_compound_is_single_token_without_inheritan
     assert "代" not in rows
 
 
+def test_dictionary_compound_can_span_numeric_noun_suffix_and_katakana_noun():
+    provider = DictionaryTranslations(
+        {
+            "一眼レフ::名詞": dictionary_entry(
+                "一眼レフ",
+                "いちがんれふ",
+                "single-lens reflex camera; SLR",
+                sense_pos="n",
+            ),
+            "一::名詞": dictionary_entry("一", "いち", "one", sense_pos="n"),
+            "眼::接尾辞": dictionary_entry(
+                "眼", "がん", "eye; eyeball", sense_pos="suf"
+            ),
+            "レフ::名詞": dictionary_entry(
+                "レフ", "れふ", "reflex camera", sense_pos="n"
+            ),
+        }
+    )
+    rows = cached_rows("一眼レフ。", provider)
+
+    camera = rows["一眼レフ"]
+    assert camera["canonical"] == "一眼レフ::名詞"
+    assert camera["hiragana"] == "いちがんれふ"
+    assert camera["romaji"] == "ichiganrefu"
+    assert camera["translation"] == "single-lens reflex camera; SLR"
+    assert camera.get("inherited_tokens") == []
+    assert "一眼" not in rows
+    assert "レフ" not in rows
+
+
 def test_arabic_number_counter_spans_use_counter_readings():
     rows = rows_by_surface("全700話で、単行本は全72巻と外伝1巻、50号。")
 
