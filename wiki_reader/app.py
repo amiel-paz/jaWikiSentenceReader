@@ -324,6 +324,23 @@ def create_app() -> Flask:
             return jsonify({"error": str(error)}), 400
         return jsonify(summary)
 
+    @app.get("/api/session-history")
+    def session_history():
+        sync_log = AnkiSyncLog(base_dir / "data" / "anki_sync.sqlite")
+        return jsonify({"sessions": sync_log.session_history()})
+
+    @app.get("/api/session-history/<session_id>")
+    def session_history_detail(session_id: str):
+        try:
+            detail = AnkiSyncLog(
+                base_dir / "data" / "anki_sync.sqlite"
+            ).session_detail(session_id)
+        except ValueError as error:
+            return jsonify({"error": str(error)}), 400
+        if detail is None:
+            return jsonify({"error": "Saved reading session not found."}), 404
+        return jsonify(detail)
+
     return app
 
 

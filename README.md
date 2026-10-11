@@ -29,6 +29,8 @@ roleplay tool continue working without migration.
 - Provides a persistent vocabulary summary across reading sessions, including
   the current unsynced session, sortable by recognition, non-recognition, or
   recognition difference.
+- Provides an article-grouped Study Log where each saved checkpoint or ended
+  session can be reopened as its own sortable vocabulary lookback.
 - Keeps a rolling Anki reference queue from explicitly recognized and
   unrecognized occurrences: the five most recent distinct examples survive,
   and repeated examples move to the newest position. Every retained example
@@ -161,6 +163,10 @@ ended reading sessions. While an article is open, its current in-memory state
 replaces that session's saved snapshot in the display, so the counts reflect
 marks made since the last checkpoint without writing anything to Anki. Sort by
 most recognized, most unrecognized, or best recognition difference.
+
+The **Study Log** keeps those saved sessions separate. Sessions are grouped by
+article, labeled as either a logged checkpoint or an ended session, and open to
+the exact vocabulary counts saved for that session.
 
 ## Optional Dictionary Index
 

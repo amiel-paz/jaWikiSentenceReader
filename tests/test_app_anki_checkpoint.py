@@ -81,6 +81,69 @@ def install_memory_sync_log(monkeypatch):
                 )
             return aggregate_vocabulary_summary(records)
 
+        def session_history(self):
+            sessions = []
+            for session_id, cards in self.summaries.items():
+                values = list(cards.values())
+                recognized = sum(
+                    int(card.get("recognized_count", 0))
+                    for card in values
+                    if card.get("review_state") != "easy"
+                )
+                unrecognized = sum(
+                    int(card.get("unrecognized_count", 0))
+                    for card in values
+                    if card.get("review_state") != "easy"
+                )
+                sessions.append(
+                    {
+                        "session_id": session_id,
+                        "article_title": values[0].get("article_title") or "Untitled article",
+                        "source_url": values[0].get("source_url", ""),
+                        "token_count": len(values),
+                        "recognized_count": recognized,
+                        "unrecognized_count": unrecognized,
+                        "always_count": sum(
+                            card.get("review_state") == "easy" for card in values
+                        ),
+                        "difference": recognized - unrecognized,
+                        "first_saved_at": "2026-10-10 20:00:00",
+                        "last_saved_at": "2026-10-10 21:00:00",
+                        "completed_at": (
+                            "2026-10-10 21:00:00"
+                            if session_id in self.completed
+                            else None
+                        ),
+                        "status": (
+                            "completed" if session_id in self.completed else "logged"
+                        ),
+                    }
+                )
+            return sessions
+
+        def session_detail(self, session_id):
+            from wiki_reader.anki_sync_log import (
+                aggregate_vocabulary_summary,
+                summary_card_record,
+                validate_session_id,
+            )
+
+            validate_session_id(session_id)
+            cards = self.summaries.get(session_id)
+            if cards is None:
+                return None
+            session = next(
+                item
+                for item in self.session_history()
+                if item["session_id"] == session_id
+            )
+            return {
+                **session,
+                "summary": aggregate_vocabulary_summary(
+                    [summary_card_record(session_id, card) for card in cards.values()]
+                ),
+            }
+
     monkeypatch.setattr(app_module, "AnkiSyncLog", MemorySyncLog)
 
     class EmptyAlwaysRecognizedStore:
@@ -292,6 +355,38 @@ def test_session_summary_excludes_counts_from_other_saved_sessions(monkeypatch):
             "source_url": "",
         }
     ]
+
+
+def test_saved_session_history_lists_and_opens_individual_session(monkeypatch):
+    memory_log = install_memory_sync_log(monkeypatch)
+    card = sample_card(
+        expression="ギリギリ",
+        canonical="ギリギリ::副詞",
+        hiragana="ぎりぎり",
+        romaji="girigiri",
+        translation="just barely",
+        article_title="今日も彼女たちがご機嫌な理由",
+        source_url="https://ncode.syosetu.com/n1122lc/",
+        recognized_count=1,
+        unrecognized_count=3,
+    )
+    memory_log.summaries[SESSION_ID] = {card["canonical"]: card}
+    memory_log.completed[SESSION_ID] = {"ended": True}
+    client = app_module.create_app().test_client()
+
+    history = client.get("/api/session-history")
+    detail = client.get(f"/api/session-history/{SESSION_ID}")
+    missing = client.get("/api/session-history/session-missing-12")
+
+    assert history.status_code == 200
+    assert history.get_json()["sessions"][0]["article_title"] == (
+        "今日も彼女たちがご機嫌な理由"
+    )
+    assert history.get_json()["sessions"][0]["status"] == "completed"
+    assert detail.status_code == 200
+    assert detail.get_json()["summary"]["token_count"] == 1
+    assert detail.get_json()["summary"]["tokens"][0]["unrecognized_count"] == 3
+    assert missing.status_code == 404
 
 
 def test_easy_card_is_saved_for_summary_but_never_sent_to_anki(monkeypatch):

@@ -198,11 +198,105 @@ class AnkiSyncLog:
                     records[(session_id, record["token_id"])] = record
         return aggregate_vocabulary_summary(list(records.values()))
 
+    def session_history(self) -> list[dict[str, Any]]:
+        """Return saved reading sessions, newest first, with outcome totals."""
+        with sqlite3.connect(self.path) as connection:
+            rows = connection.execute(
+                """
+                SELECT summary_card.session_id,
+                       COALESCE(NULLIF(MAX(summary_card.article_title), ''),
+                                'Untitled article') AS article_title,
+                       MAX(summary_card.source_url) AS source_url,
+                       COUNT(*) AS token_count,
+                       SUM(CASE WHEN summary_card.review_state != 'easy'
+                                THEN summary_card.recognized_count ELSE 0 END)
+                           AS recognized_count,
+                       SUM(CASE WHEN summary_card.review_state != 'easy'
+                                THEN summary_card.unrecognized_count ELSE 0 END)
+                           AS unrecognized_count,
+                       SUM(CASE WHEN summary_card.review_state = 'easy'
+                                THEN 1 ELSE 0 END) AS always_count,
+                       MIN(summary_card.updated_at) AS first_saved_at,
+                       MAX(summary_card.updated_at) AS last_saved_at,
+                       completed_sync.completed_at
+                FROM summary_card
+                LEFT JOIN completed_sync
+                  ON completed_sync.session_id = summary_card.session_id
+                GROUP BY summary_card.session_id, completed_sync.completed_at
+                ORDER BY last_saved_at DESC, summary_card.session_id DESC
+                """
+            ).fetchall()
+        return [session_history_record(row) for row in rows]
+
+    def session_detail(self, session_id: str) -> dict[str, Any] | None:
+        session_id = validate_session_id(session_id)
+        session = next(
+            (
+                item
+                for item in self.session_history()
+                if item["session_id"] == session_id
+            ),
+            None,
+        )
+        if session is None:
+            return None
+        with sqlite3.connect(self.path) as connection:
+            rows = connection.execute(
+                """
+                SELECT session_id, token_id, expression, hiragana, romaji,
+                       translation, article_title, source_url, review_state,
+                       recognized_count, unrecognized_count
+                FROM summary_card
+                WHERE session_id = ?
+                ORDER BY updated_at, token_id
+                """,
+                (session_id,),
+            ).fetchall()
+        summary = aggregate_vocabulary_summary(
+            [summary_record_from_row(row) for row in rows]
+        )
+        return {**session, "summary": summary}
+
 
 def card_fingerprint(card: Mapping[str, Any]) -> str:
     """Return a stable identity for the exact note fields and review answer."""
     payload = json.dumps(card, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def summary_record_from_row(row: tuple[Any, ...]) -> dict[str, Any]:
+    return {
+        "session_id": str(row[0]),
+        "token_id": str(row[1]),
+        "expression": str(row[2]),
+        "hiragana": str(row[3]),
+        "romaji": str(row[4]),
+        "translation": str(row[5]),
+        "article_title": str(row[6]),
+        "source_url": str(row[7]),
+        "review_state": str(row[8]),
+        "recognized_count": int(row[9]),
+        "unrecognized_count": int(row[10]),
+    }
+
+
+def session_history_record(row: tuple[Any, ...]) -> dict[str, Any]:
+    recognized_count = int(row[4] or 0)
+    unrecognized_count = int(row[5] or 0)
+    return {
+        "session_id": str(row[0]),
+        "article_title": str(row[1]),
+        "source_url": str(row[2]),
+        "token_count": int(row[3]),
+        "recognized_count": recognized_count,
+        "unrecognized_count": unrecognized_count,
+        "always_count": int(row[6] or 0),
+        "difference": recognized_count - unrecognized_count,
+        "first_saved_at": str(row[7]),
+        "last_saved_at": str(row[8]),
+        "completed_at": str(row[9]) if row[9] is not None else None,
+        "status": "completed" if row[9] is not None else "logged",
+    }
 
 
 def summary_card_record(

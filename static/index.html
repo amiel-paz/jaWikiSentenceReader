@@ -11,6 +11,7 @@
       <section class="topbar">
         <h1 id="article-title">Japanese Sentence Reader</h1>
         <div class="topbar-actions">
+          <button id="study-log-button" class="summary-button" type="button">Study Log</button>
           <button id="summary-button" class="summary-button" type="button">Summary</button>
           <div class="theme-toggle" role="group" aria-label="Theme">
             <button id="theme-light" type="button" aria-pressed="true">Light</button>
@@ -175,6 +176,36 @@
       </div>
       <p id="vocabulary-summary-meta" class="vocabulary-summary-meta"></p>
       <div id="vocabulary-summary-list" class="vocabulary-summary-list"></div>
+    </dialog>
+
+    <dialog id="study-log-dialog" class="summary-dialog study-log-dialog">
+      <div class="summary-dialog-heading">
+        <div>
+          <div class="summary-eyebrow">STUDY LOG</div>
+          <h2 id="study-log-heading">Reading sessions</h2>
+        </div>
+        <button id="study-log-close" class="summary-close" type="button" aria-label="Close">×</button>
+      </div>
+      <section id="study-log-index">
+        <p id="study-log-meta" class="vocabulary-summary-meta"></p>
+        <div id="study-log-list" class="study-log-list"></div>
+      </section>
+      <section id="study-log-detail" hidden>
+        <button id="study-log-back" class="study-log-back" type="button">← All sessions</button>
+        <div id="study-log-session-meta" class="study-log-session-meta"></div>
+        <div class="summary-sort" role="tablist" aria-label="Sort session vocabulary">
+          <button type="button" role="tab" data-history-sort="recognized" aria-selected="true">
+            Most recognized
+          </button>
+          <button type="button" role="tab" data-history-sort="unrecognized" aria-selected="false">
+            Most unrecognized
+          </button>
+          <button type="button" role="tab" data-history-sort="difference" aria-selected="false">
+            Best difference
+          </button>
+        </div>
+        <div id="study-log-vocabulary" class="vocabulary-summary-list"></div>
+      </section>
     </dialog>
 
     <script src="/app.js"></script>

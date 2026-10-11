@@ -13,6 +13,9 @@ const state = {
   sessionId: null,
   summarySort: "recognized",
   summary: null,
+  sessionHistory: [],
+  sessionHistoryDetail: null,
+  sessionHistorySort: "recognized",
   sentenceAidCache: new Map(),
   revealedSentenceAids: new Set(),
 };
@@ -67,6 +70,9 @@ const confirmEndButton = document.querySelector("#confirm-end");
 const sessionSummaryList = document.querySelector("#session-summary-list");
 const ankiSyncStatus = document.querySelector("#anki-sync-status");
 const summaryDialog = document.querySelector("#summary-dialog");
+const studyLogDialog = document.querySelector("#study-log-dialog");
+const studyLogIndex = document.querySelector("#study-log-index");
+const studyLogDetail = document.querySelector("#study-log-detail");
 let activeAnchor = null;
 
 setTheme(localStorage.getItem("wikiReaderTheme") === "dark" ? "dark" : "light");
@@ -89,13 +95,24 @@ revealSentenceAidsButton.addEventListener("click", () => {
 themeLightButton.addEventListener("click", () => setTheme("light"));
 themeDarkButton.addEventListener("click", () => setTheme("dark"));
 document.querySelector("#summary-button").addEventListener("click", openSummary);
+document.querySelector("#study-log-button").addEventListener("click", openStudyLog);
 document.querySelector("#summary-close").addEventListener("click", () => {
   summaryDialog.close();
 });
+document.querySelector("#study-log-close").addEventListener("click", () => {
+  studyLogDialog.close();
+});
+document.querySelector("#study-log-back").addEventListener("click", showStudyLogIndex);
 document.querySelectorAll("[data-summary-sort]").forEach((button) => {
   button.addEventListener("click", () => {
     state.summarySort = button.dataset.summarySort;
     renderVocabularySummary();
+  });
+});
+document.querySelectorAll("[data-history-sort]").forEach((button) => {
+  button.addEventListener("click", () => {
+    state.sessionHistorySort = button.dataset.historySort;
+    renderStudyLogDetail();
   });
 });
 logSessionButton.addEventListener("click", async () => {
@@ -266,25 +283,176 @@ async function openSummary() {
   }
 }
 
-function renderVocabularySummary() {
-  if (!state.summary) return;
-  document.querySelectorAll("[data-summary-sort]").forEach((button) => {
+async function openStudyLog() {
+  try {
+    const response = await fetch("/api/session-history");
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.error || "Could not load saved reading sessions.");
+    }
+    state.sessionHistory = payload.sessions || [];
+    state.sessionHistoryDetail = null;
+    renderStudyLogIndex();
+    showStudyLogIndex();
+    if (!studyLogDialog.open) studyLogDialog.showModal();
+  } catch (error) {
+    window.alert(error.message);
+  }
+}
+
+function renderStudyLogIndex() {
+  const meta = document.querySelector("#study-log-meta");
+  const list = document.querySelector("#study-log-list");
+  const sessions = state.sessionHistory;
+  meta.textContent = `${sessions.length} saved reading session${sessions.length === 1 ? "" : "s"}`;
+  list.replaceChildren();
+  if (!sessions.length) {
+    const empty = document.createElement("p");
+    empty.className = "vocabulary-summary-empty";
+    empty.textContent = "No reading sessions have been logged yet.";
+    list.append(empty);
+    return;
+  }
+
+  const byArticle = new Map();
+  for (const session of sessions) {
+    const title = session.article_title || "Untitled article";
+    if (!byArticle.has(title)) byArticle.set(title, []);
+    byArticle.get(title).push(session);
+  }
+  for (const [title, articleSessions] of byArticle) {
+    const group = document.createElement("section");
+    group.className = "study-log-group";
+    const heading = document.createElement("div");
+    heading.className = "study-log-group-heading";
+    const articleTitle = document.createElement("h3");
+    articleTitle.lang = "ja";
+    articleTitle.textContent = title;
+    const count = document.createElement("span");
+    count.textContent = `${articleSessions.length} session${articleSessions.length === 1 ? "" : "s"}`;
+    heading.append(articleTitle, count);
+    const rows = document.createElement("div");
+    rows.className = "study-log-group-rows";
+    for (const session of articleSessions) rows.append(studyLogSessionRow(session));
+    group.append(heading, rows);
+    list.append(group);
+  }
+}
+
+function studyLogSessionRow(session) {
+  const button = document.createElement("button");
+  button.className = "study-log-session";
+  button.type = "button";
+  button.addEventListener("click", () => openStudyLogSession(session.session_id));
+
+  const primary = document.createElement("span");
+  primary.className = "study-log-session-primary";
+  const date = document.createElement("strong");
+  date.textContent = formatSavedSessionDate(session.last_saved_at);
+  const status = document.createElement("span");
+  status.className = `study-log-status ${session.status}`;
+  status.textContent = session.status === "completed" ? "Ended" : "Logged";
+  primary.append(date, status);
+
+  const counts = document.createElement("span");
+  counts.className = "study-log-session-counts";
+  counts.textContent = [
+    `${session.token_count} tokens`,
+    `${session.recognized_count} recognized`,
+    `${session.unrecognized_count} unrecognized`,
+    session.always_count ? `${session.always_count} always` : "",
+  ].filter(Boolean).join(" · ");
+
+  const arrow = document.createElement("span");
+  arrow.className = "study-log-session-arrow";
+  arrow.setAttribute("aria-hidden", "true");
+  arrow.textContent = "→";
+  button.append(primary, counts, arrow);
+  return button;
+}
+
+async function openStudyLogSession(sessionId) {
+  try {
+    const response = await fetch(`/api/session-history/${encodeURIComponent(sessionId)}`);
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.error || "Could not load that reading session.");
+    }
+    state.sessionHistoryDetail = payload;
+    renderStudyLogDetail();
+    studyLogIndex.hidden = true;
+    studyLogDetail.hidden = false;
+  } catch (error) {
+    window.alert(error.message);
+  }
+}
+
+function showStudyLogIndex() {
+  document.querySelector("#study-log-heading").textContent = "Reading sessions";
+  studyLogDetail.hidden = true;
+  studyLogIndex.hidden = false;
+}
+
+function renderStudyLogDetail() {
+  const detail = state.sessionHistoryDetail;
+  if (!detail) return;
+  document.querySelector("#study-log-heading").textContent = detail.article_title;
+  document.querySelectorAll("[data-history-sort]").forEach((button) => {
     button.setAttribute(
       "aria-selected",
-      String(button.dataset.summarySort === state.summarySort),
+      String(button.dataset.historySort === state.sessionHistorySort),
     );
   });
-  const values = [...state.summary.tokens];
+
+  const meta = document.querySelector("#study-log-session-meta");
+  const status = detail.status === "completed" ? "Ended session" : "Logged checkpoint";
+  meta.textContent = [
+    formatSavedSessionDate(detail.last_saved_at),
+    status,
+    `${detail.token_count} tracked tokens`,
+    `${detail.recognized_count} recognized`,
+    `${detail.unrecognized_count} unrecognized`,
+    detail.always_count ? `${detail.always_count} always recognized` : "",
+  ].filter(Boolean).join(" · ");
+
+  const list = document.querySelector("#study-log-vocabulary");
+  list.replaceChildren();
+  const values = sortedVocabularyTokens(
+    detail.summary.tokens,
+    state.sessionHistorySort,
+  );
+  if (!values.length) {
+    const empty = document.createElement("p");
+    empty.className = "vocabulary-summary-empty";
+    empty.textContent = "No vocabulary was tracked in this session.";
+    list.append(empty);
+    return;
+  }
+  for (const token of values) list.append(vocabularySummaryRow(token));
+}
+
+function formatSavedSessionDate(value) {
+  const normalized = String(value || "").replace(" ", "T");
+  const date = new Date(`${normalized}Z`);
+  if (Number.isNaN(date.getTime())) return String(value || "Unknown date");
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+}
+
+function sortedVocabularyTokens(tokens, sort) {
+  const values = [...tokens];
   const expressionOrder = (left, right) => (
     String(left.expression).localeCompare(String(right.expression), "ja")
   );
   values.sort((left, right) => {
-    if (state.summarySort === "unrecognized") {
+    if (sort === "unrecognized") {
       return right.unrecognized_count - left.unrecognized_count
         || left.recognized_count - right.recognized_count
         || expressionOrder(left, right);
     }
-    if (state.summarySort === "difference") {
+    if (sort === "difference") {
       return right.difference - left.difference
         || right.recognized_count - left.recognized_count
         || left.unrecognized_count - right.unrecognized_count
@@ -294,6 +462,18 @@ function renderVocabularySummary() {
       || right.unrecognized_count - left.unrecognized_count
       || expressionOrder(left, right);
   });
+  return values;
+}
+
+function renderVocabularySummary() {
+  if (!state.summary) return;
+  document.querySelectorAll("[data-summary-sort]").forEach((button) => {
+    button.setAttribute(
+      "aria-selected",
+      String(button.dataset.summarySort === state.summarySort),
+    );
+  });
+  const values = sortedVocabularyTokens(state.summary.tokens, state.summarySort);
 
   const meta = document.querySelector("#vocabulary-summary-meta");
   meta.textContent = `${state.summary.token_count} tracked token${state.summary.token_count === 1 ? "" : "s"} in this reading session`;

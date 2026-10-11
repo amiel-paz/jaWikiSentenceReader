@@ -59,6 +59,21 @@ def test_persistent_vocabulary_summary_matches_roleplay_sorting_controls():
     assert "right.difference - left.difference" in script
 
 
+def test_saved_session_log_lists_and_opens_reading_lookbacks():
+    script = (PROJECT_ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    markup = (PROJECT_ROOT / "static" / "index.html").read_text(encoding="utf-8")
+
+    assert 'id="study-log-button"' in markup
+    assert 'id="study-log-dialog"' in markup
+    assert 'id="study-log-list"' in markup
+    assert 'id="study-log-detail"' in markup
+    assert "Reading sessions" in markup
+    assert 'fetch("/api/session-history")' in script
+    assert "fetch(`/api/session-history/${encodeURIComponent(sessionId)}`)" in script
+    assert "Logged checkpoint" in script
+    assert "Ended session" in script
+
+
 def test_reader_uses_source_neutral_product_name():
     script = (PROJECT_ROOT / "static" / "app.js").read_text(encoding="utf-8")
     markup = (PROJECT_ROOT / "static" / "index.html").read_text(encoding="utf-8")

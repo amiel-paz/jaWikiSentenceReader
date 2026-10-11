@@ -106,3 +106,79 @@ def test_vocabulary_summary_aggregates_sessions_and_current_state(tmp_path):
         "First article",
         "Second article",
     }
+
+
+def test_session_history_and_detail_preserve_each_reading_session(tmp_path):
+    log = AnkiSyncLog(tmp_path / "anki_sync.sqlite")
+    first_session = "session-12345678"
+    second_session = "session-87654321"
+    log.save_summary_cards(
+        first_session,
+        [
+            {
+                "canonical": "離れる::動詞",
+                "expression": "離れる",
+                "hiragana": "はなれる",
+                "romaji": "hanareru",
+                "translation": "to leave",
+                "article_title": "First article",
+                "source_url": "https://example.com/first",
+                "review_state": "again",
+                "recognized_count": 1,
+                "unrecognized_count": 2,
+            },
+            {
+                "canonical": "予約::名詞",
+                "expression": "予約",
+                "hiragana": "よやく",
+                "romaji": "yoyaku",
+                "translation": "reservation",
+                "article_title": "First article",
+                "source_url": "https://example.com/first",
+                "review_state": "easy",
+                "recognized_count": 0,
+                "unrecognized_count": 0,
+            },
+        ],
+    )
+    log.save_summary_cards(
+        second_session,
+        [
+            {
+                "canonical": "離れる::動詞",
+                "expression": "離れる",
+                "hiragana": "はなれる",
+                "romaji": "hanareru",
+                "translation": "to leave",
+                "article_title": "Second article",
+                "source_url": "https://example.com/second",
+                "review_state": "good",
+                "recognized_count": 3,
+                "unrecognized_count": 0,
+            }
+        ],
+    )
+    log.save(first_session, {"tokens": 1})
+
+    sessions = {item["session_id"]: item for item in log.session_history()}
+    assert set(sessions) == {first_session, second_session}
+    assert sessions[first_session]["article_title"] == "First article"
+    assert sessions[first_session]["token_count"] == 2
+    assert sessions[first_session]["recognized_count"] == 1
+    assert sessions[first_session]["unrecognized_count"] == 2
+    assert sessions[first_session]["always_count"] == 1
+    assert sessions[first_session]["difference"] == -1
+    assert sessions[first_session]["status"] == "completed"
+    assert sessions[second_session]["status"] == "logged"
+
+    detail = log.session_detail(first_session)
+    assert detail is not None
+    assert detail["summary"]["session_count"] == 1
+    assert detail["summary"]["token_count"] == 2
+    by_token = {
+        token["token_id"]: token for token in detail["summary"]["tokens"]
+    }
+    assert by_token["離れる::動詞"]["recognized_count"] == 1
+    assert by_token["離れる::動詞"]["unrecognized_count"] == 2
+    assert by_token["予約::名詞"]["always_count"] == 1
+    assert log.session_detail("session-missing-12") is None

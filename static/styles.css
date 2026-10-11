@@ -777,6 +777,102 @@ h1 {
   text-align: center;
 }
 
+.study-log-dialog {
+  width: min(calc(100% - 32px), 920px);
+}
+
+.study-log-list {
+  display: grid;
+  gap: 14px;
+  max-height: min(590px, calc(100dvh - 190px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.study-log-group {
+  border: 1px solid var(--line);
+}
+
+.study-log-group-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  padding: 12px 14px;
+}
+
+.study-log-group-heading h3 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.study-log-group-heading span,
+.study-log-session-counts,
+.study-log-session-meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.study-log-group-rows {
+  display: grid;
+}
+
+.study-log-session {
+  display: grid;
+  grid-template-columns: minmax(150px, auto) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  border: 0;
+  border-top: 1px solid var(--line);
+  padding: 13px 14px;
+  text-align: left;
+}
+
+.study-log-session:first-child {
+  border-top: 0;
+}
+
+.study-log-session:hover {
+  background: var(--hover);
+}
+
+.study-log-session-primary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.study-log-status {
+  border: 1px solid var(--line);
+  padding: 2px 5px;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.study-log-status.completed {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.study-log-session-arrow {
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.study-log-back {
+  margin-bottom: 14px;
+  padding: 7px 10px;
+  font-weight: 800;
+}
+
+.study-log-session-meta {
+  margin-bottom: 14px;
+  line-height: 1.5;
+}
+
 @media (max-width: 720px) {
   .confirm {
     padding: 12px;
@@ -830,6 +926,20 @@ h1 {
   .summary-sort,
   .vocabulary-summary-row {
     grid-template-columns: 1fr;
+  }
+
+  .study-log-session {
+    grid-template-columns: 1fr auto;
+  }
+
+  .study-log-session-counts {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .study-log-session-arrow {
+    grid-column: 2;
+    grid-row: 1 / span 2;
   }
 
   .vocabulary-summary-counts {
