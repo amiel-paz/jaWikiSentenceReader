@@ -448,6 +448,22 @@ def vocabulary_mapping(
                 ),
                 "mapping_status": "dictionary",
             }
+    if (
+        str(token.get("pos1", "")) == "動詞"
+        and str(token.get("pos2", "")) == "補助動詞・損なう"
+        and str(token.get("translation", "")).strip()
+    ):
+        hiragana = str(token.get("hiragana", ""))
+        return {
+            "token_id": canonical,
+            "dictionary_id": f"Grammar:{canonical}",
+            "source": "Local grammar",
+            "headword": lemma,
+            "hiragana": hiragana,
+            "romaji": str(token.get("romaji", "") or kana_to_romaji(hiragana)),
+            "translation": str(token["translation"]),
+            "mapping_status": "grammar",
+        }
     lookup = getattr(translation_provider, "lookup_entry", None)
     entry = lookup(token) if callable(lookup) else None
     if entry:
@@ -680,6 +696,19 @@ def analyze_sentence(
                 )
             )
             index = te_miru_end
+            continue
+        sokonau_end = sokonau_chain_end_index(tagged, index)
+        if sokonau_end is not None:
+            rows.append(
+                sokonau_chain_token(
+                    tagged[index:sokonau_end],
+                    sentence,
+                    translation_provider,
+                    phrase_matches,
+                    place_matches,
+                )
+            )
+            index = sokonau_end
             continue
         compound_verb_items = dictionary_compound_verb_items(
             tagged, index, sentence, translation_provider
@@ -1589,6 +1618,87 @@ def te_miru_translation(base_translation: str) -> str:
     if attempts:
         return "; ".join(attempts)
     return "to try doing; to do and see what happens"
+
+
+def sokonau_chain_end_index(tagged: list[object], start: int) -> int | None:
+    """Return the full inflected span of productive V-stem + 損なう."""
+    if start + 1 >= len(tagged):
+        return None
+    base = tagged[start]
+    auxiliary = tagged[start + 1]
+    auxiliary_node = auxiliary.node
+    if not (
+        node_is_verb(base.node)
+        and node_is_verb(auxiliary_node)
+        and str(getattr(auxiliary_node.feature, "pos2", "")) == "非自立可能"
+        and str(getattr(auxiliary_node.feature, "orthBase", "")) == "損なう"
+        and base.end == auxiliary.start
+    ):
+        return None
+
+    te_iru_end = te_iru_chain_end_index(tagged, start + 1)
+    if te_iru_end is not None:
+        return te_iru_end
+    end = start + 2
+    while end < len(tagged):
+        item = tagged[end]
+        if (
+            str(getattr(item.node.feature, "pos1", "")) != "助動詞"
+            or tagged[end - 1].end != item.start
+        ):
+            break
+        end += 1
+    if (
+        end < len(tagged)
+        and tagged[end - 1].end == tagged[end].start
+        and str(tagged[end].node.surface) in {"て", "で"}
+    ):
+        end += 1
+    return end
+
+
+def sokonau_chain_token(
+    items: list[object],
+    sentence: str,
+    translation_provider: TranslationProvider,
+    phrase_matches: list[dict[str, Any]],
+    place_matches: list[dict[str, Any]],
+) -> dict[str, Any]:
+    base = items[0].node
+    base_surface = sentence[items[0].start : items[1].start]
+    dictionary_surface = f"{base_surface}損なう"
+    base_reading = inflected_node_reading(base)
+    hiragana = f"{base_reading}そこなう" if base_reading else ""
+    base_row = plain_token_row(base, translation_provider)
+    return {
+        "surface": sentence[items[0].start : items[-1].end],
+        "pos1": "動詞",
+        "pos2": "補助動詞・損なう",
+        "canonical": f"{dictionary_surface}::動詞",
+        "hiragana": hiragana,
+        "romaji": kana_to_romaji(hiragana),
+        "reading_status": "grammar" if hiragana else "missing",
+        "translation": sokonau_translation(str(base_row.get("translation", ""))),
+        "start": items[0].start,
+        "end": items[-1].end,
+        "phrases": overlapping_phrases(
+            phrase_matches, items[0].start, items[-1].end
+        ),
+        "places": overlapping_places(
+            place_matches, items[0].start, items[-1].end
+        ),
+    }
+
+
+def sokonau_translation(base_translation: str) -> str:
+    first_gloss = next(
+        (part.strip() for part in base_translation.split(";") if part.strip()),
+        "",
+    )
+    if first_gloss.startswith("to ") and len(first_gloss) > 3:
+        action = first_gloss[3:]
+        return f"to fail to {action}; to miss the chance to {action}"
+    return "to fail or miss the chance to do; to do unsuccessfully"
 
 
 def inflected_node_reading(node) -> str:

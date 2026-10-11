@@ -746,6 +746,53 @@ def test_dictionary_compound_verb_spans_adjacent_verb_nodes(tmp_path):
     assert "抜く" not in rows
 
 
+def test_sokonau_auxiliary_forms_one_inflected_learnable_token(tmp_path):
+    dictionary_path = tmp_path / "dictionary.sqlite"
+    write_dictionary(
+        dictionary_path,
+        [
+            (
+                "食べる",
+                "JMdict",
+                "1358280",
+                "食べる",
+                "たべる",
+                "to eat",
+                20,
+                1,
+                "v1,vt",
+            ),
+        ],
+    )
+    provider = SqliteDictionaryProvider(dictionary_path)
+
+    result = analyze_sentence_with_cache(
+        "食べ損なった昼飯。",
+        translation_provider=provider,
+    )
+    rows = {row["surface"]: row for row in result["tokens"]}
+
+    expression = rows["食べ損なった"]
+    assert expression["canonical"] == "食べ損なう::動詞"
+    assert expression["hiragana"] == "たべそこなう"
+    assert expression["romaji"] == "tabesokonau"
+    assert expression["translation"] == (
+        "to fail to eat; to miss the chance to eat"
+    )
+    assert expression["vocabulary"] == {
+        "token_id": "食べ損なう::動詞",
+        "dictionary_id": "Grammar:食べ損なう::動詞",
+        "source": "Local grammar",
+        "headword": "食べ損なう",
+        "hiragana": "たべそこなう",
+        "romaji": "tabesokonau",
+        "translation": "to fail to eat; to miss the chance to eat",
+        "mapping_status": "grammar",
+    }
+    assert "食べ" not in rows
+    assert "損なっ" not in rows
+
+
 def test_dictionary_sahen_noun_and_wo_suru_form_one_learnable_token(tmp_path):
     dictionary_path = tmp_path / "dictionary.sqlite"
     write_dictionary(

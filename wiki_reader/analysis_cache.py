@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 
-ANALYSIS_CACHE_VERSION = "2026-10-10-clean-numeric-dictionary-compounds"
+ANALYSIS_CACHE_VERSION = "2026-10-10-sokonau-grammar-chain"
 
 
 class AnalysisCache:
